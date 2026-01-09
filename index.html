@@ -3,33 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Biometric Back Camera Analyzer</title>
+    <title>AI Stress Analysis - Full Body</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
 
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
-        video { position: absolute; visibility: hidden; }
-        /* Mirroring removed for back camera accuracy */
-        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
         
+        /* Video hidden, canvas displays everything */
+        video { position: absolute; visibility: hidden; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); }
+
+        #ui-overlay {
+            position: fixed; top: 20px; left: 0; width: 100%;
+            display: flex; flex-direction: column; align-items: center;
+            pointer-events: none; z-index: 10;
+        }
+
+        .alert-badge {
+            background: rgba(255, 59, 48, 0.9); color: white; padding: 12px 25px;
+            border-radius: 50px; font-weight: bold; font-size: 14px;
+            display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse { 0% {opacity: 1} 50% {opacity: 0.7} 100% {opacity: 1} }
+
         #loading {
             position: fixed; inset: 0; background: #000; z-index: 100;
-            display: flex; align-items: center; justify-content: center; color: #34C759; letter-spacing: 2px;
+            display: flex; align-items: center; justify-content: center; color: white;
         }
     </style>
 </head>
 <body>
 
-<div id="loading">CONNECTING REAR SENSORS...</div>
+<div id="loading">CONNECTING TO BIOMETRIC SENSORS...</div>
 <video id="video" playsinline></video>
 <canvas id="canvas"></canvas>
+
+<div id="ui-overlay">
+    <div id="alert-badge" class="alert-badge">HIGH MECHANICAL STRESS</div>
+</div>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const alertBadge = document.getElementById('alert-badge');
 
 const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -44,38 +65,21 @@ pose.setOptions({
 
 pose.onResults(onResults);
 
-// --- HARD-CODED BACK CAMERA INIT ---
-async function startBackCamera() {
+async function startApp() {
     try {
-        // Request the environment camera specifically
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { exact: "environment" } },
-            audio: false
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
         video.srcObject = stream;
-        
-        const camera = new Camera(video, {
-            onFrame: async () => { await pose.send({image: video}); },
-            width: 1280, height: 720
-        });
-        camera.start();
-        document.getElementById('loading').style.display = 'none';
-    } catch (e) {
-        // Fallback for browsers that don't support "exact" constraint
-        try {
-            const streamFallback = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" } 
-            });
-            video.srcObject = streamFallback;
+        video.onloadedmetadata = () => {
+            video.play();
             const camera = new Camera(video, {
                 onFrame: async () => { await pose.send({image: video}); },
-                width: 1280, height: 720
+                width: 640, height: 480
             });
             camera.start();
             document.getElementById('loading').style.display = 'none';
-        } catch (err) {
-            document.getElementById('loading').innerText = "CAMERA ERROR: " + err.name;
-        }
+        };
+    } catch (e) {
+        document.getElementById('loading').innerText = "CAMERA ACCESS DENIED";
     }
 }
 
@@ -85,25 +89,14 @@ function calcAngle(a, b, c) {
     return deg > 180 ? 360 - deg : deg;
 }
 
-function drawLabel(text, point, color) {
-    const x = point.x * canvas.width;
-    const y = point.y * canvas.height;
-    
-    // Label Background
-    ctx.fillStyle = "rgba(0,0,0,0.8)";
-    ctx.fillRect(x + 10, y - 25, 50, 22);
-    // Label Text
-    ctx.fillStyle = color;
-    ctx.font = "bold 15px monospace";
-    ctx.fillText(`${Math.round(text)}°`, x + 14, y - 9);
-}
-
-function drawBone(a, b, isStressed) {
+function drawStressBone(a, b, isStressed) {
+    if (!a || !b) return;
     ctx.beginPath();
     ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
     ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-    ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759';
-    ctx.lineWidth = isStressed ? 6 : 3;
+    ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759'; // Red if stressed, Green if safe
+    ctx.lineWidth = isStressed ? 8 : 4;
+    ctx.lineCap = 'round';
     ctx.stroke();
 }
 
@@ -111,48 +104,60 @@ function onResults(results) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Draw raw camera feed (unmirrored)
+    // Draw Camera Feed
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.translate(-canvas.width, 0);
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
 
     if (!results.poseLandmarks) return;
     const lm = results.poseLandmarks;
 
-    // --- ANGLE DATA ---
-    const angLElbow = calcAngle(lm[11], lm[13], lm[15]);
-    const angRElbow = calcAngle(lm[12], lm[14], lm[16]);
-    const angLKnee = calcAngle(lm[23], lm[25], lm[27]);
-    const angRKnee = calcAngle(lm[24], lm[26], lm[28]);
-
-    ctx.lineCap = 'round';
+    // --- ANALYSIS LOGIC ---
     
-    // --- DRAW SKELETON ---
-    // Arms (Stress if bent too far)
-    drawBone(lm[11], lm[13], angLElbow < 45); drawBone(lm[13], lm[15], angLElbow < 45);
-    drawBone(lm[12], lm[14], angRElbow < 45); drawBone(lm[14], lm[16], angRElbow < 45);
-    
-    // Legs (Stress if bent > squat)
-    drawBone(lm[23], lm[25], angLKnee < 150); drawBone(lm[25], lm[27], angLKnee < 150);
-    drawBone(lm[24], lm[26], angRKnee < 150); drawBone(lm[26], lm[28], angRKnee < 150);
-    
-    // Core (Shoulders, Hips, Torso)
-    drawBone(lm[11], lm[12], false); 
-    drawBone(lm[11], lm[23], false); drawBone(lm[12], lm[24], false);
-    drawBone(lm[23], lm[24], false);
+    // 1. Neck/Cervical Stress
+    const sWidth = Math.abs(lm[11].x - lm[12].x);
+    const headHeight = ((lm[11].y + lm[12].y)/2) - lm[0].y;
+    const neckStress = (headHeight / sWidth) < 0.45;
 
-    // --- DRAW DATA LABELS ---
-    drawLabel(angLElbow, lm[13], angLElbow < 45 ? "red" : "lime");
-    drawLabel(angRElbow, lm[14], angRElbow < 45 ? "red" : "lime");
-    drawLabel(angLKnee, lm[25], angLKnee < 150 ? "red" : "lime");
-    drawLabel(angRKnee, lm[26], angRKnee < 150 ? "red" : "lime");
+    // 2. Arm/Elbow Stress
+    const angL = calcAngle(lm[11], lm[13], lm[15]);
+    const angR = calcAngle(lm[12], lm[14], lm[16]);
+    const armStress = (angL < 50 || angR < 50);
 
-    // Nose Reference Point
-    ctx.fillStyle = "#34C759";
+    // 3. Leg/Knee Stress (Detects deep bending or crouching)
+    const kneeL = calcAngle(lm[23], lm[25], lm[27]);
+    const kneeR = calcAngle(lm[24], lm[26], lm[28]);
+    const legStress = (kneeL < 155 || kneeR < 155);
+
+    // Show/Hide Warning
+    alertBadge.style.display = (neckStress || armStress || legStress) ? 'block' : 'none';
+
+    // --- DRAW FULL BIOMECHANICAL SKELETON ---
+    
+    // Upper Body
+    drawStressBone(lm[11], lm[12], neckStress); // Neck Base
+    drawStressBone(lm[11], lm[13], armStress); drawStressBone(lm[13], lm[15], armStress); // Left Arm
+    drawStressBone(lm[12], lm[14], armStress); drawStressBone(lm[14], lm[16], armStress); // Right Arm
+    
+    // Core/Torso
+    drawStressBone(lm[11], lm[23], false); 
+    drawStressBone(lm[12], lm[24], false);
+    drawStressBone(lm[23], lm[24], false); // Pelvis
+    
+    // Lower Body
+    drawStressBone(lm[23], lm[25], legStress); drawStressBone(lm[25], lm[27], legStress); // Left Leg
+    drawStressBone(lm[24], lm[26], legStress); drawStressBone(lm[26], lm[28], legStress); // Right Leg
+
+    // Head Point
+    ctx.fillStyle = neckStress ? '#FF3B30' : '#34C759';
     ctx.beginPath();
-    ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 5, 0, 2*Math.PI);
+    ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 10, 0, 2*Math.PI);
     ctx.fill();
 }
 
-startBackCamera();
+startApp();
 </script>
 </body>
 </html>
