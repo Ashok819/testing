@@ -2,247 +2,151 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>COCO-SSD + MediaPipe Pose Angle Detection</title>
 
-<title>Mobile Posture Stress Scanner</title>
+<!-- TensorFlow -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"></script>
+<!-- MediaPipe Pose -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
 
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{
-height:100dvh;
-background:#000;
-color:#fff;
-font-family:system-ui;
-overflow:hidden;
+body {
+  margin: 0;
+  background: black;
+  overflow: hidden;
 }
-
-#viewport{
-position:relative;
-width:100%;
-height:100%;
+video, canvas {
+  position: absolute;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
 }
-
-video{
-position:absolute;
-inset:0;
-width:100%;
-height:100%;
-object-fit:cover;
-background:#000;
-}
-
-canvas{
-position:absolute;
-inset:0;
-width:100%;
-height:100%;
-pointer-events:none;
-background:transparent;
-}
-
-#ui{
-position:absolute;
-top:12px;
-right:12px;
-width:220px;
-background:rgba(0,0,0,.55);
-backdrop-filter:blur(12px);
-border-radius:14px;
-padding:14px;
-}
-
-h1{
-font-size:12px;
-letter-spacing:2px;
-color:#00f2ff;
-margin-bottom:10px;
-}
-
-.region{
-margin-bottom:10px;
-}
-
-.label{
-font-size:10px;
-color:#aaa;
-}
-
-.value{
-font-size:20px;
-font-family:monospace;
-}
-
-.bar{
-height:6px;
-background:#222;
-border-radius:4px;
-overflow:hidden;
-}
-
-.fill{
-height:100%;
-width:0%;
-transition:.4s;
-}
-
-.green{background:#4caf50}
-.yellow{background:#ffcc00}
-.orange{background:#ff9800}
-.red{background:#ff3b30}
-
-#loading{
-position:fixed;
-inset:0;
-background:#000;
-display:grid;
-place-items:center;
-z-index:999;
+#info {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  color: #00ffcc;
+  font-size: 16px;
+  font-family: monospace;
 }
 </style>
 </head>
 
 <body>
-
-<div id="loading">Initializing Camera…</div>
-
-<div id="viewport">
-<video id="video" autoplay muted playsinline webkit-playsinline></video>
+<video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
+<div id="info">Loading models…</div>
 
-<div id="ui">
-<h1>POSTURE LOAD</h1>
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
 
-<div class="region"><div class="label">NECK</div>
-<div id="neckV" class="value">0%</div>
-<div class="bar"><div id="neckB" class="fill"></div></div></div>
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-<div class="region"><div class="label">SHOULDER</div>
-<div id="shoulderV" class="value">0%</div>
-<div class="bar"><div id="shoulderB" class="fill"></div></div></div>
-
-<div class="region"><div class="label">ARMS</div>
-<div id="armsV" class="value">0%</div>
-<div class="bar"><div id="armsB" class="fill"></div></div></div>
-
-<div class="region"><div class="label">LEGS</div>
-<div id="legsV" class="value">0%</div>
-<div class="bar"><div id="legsB" class="fill"></div></div></div>
-
-<div class="region"><div class="label">TOTAL</div>
-<div id="totalV" class="value">0%</div>
-<div class="bar"><div id="totalB" class="fill"></div></div></div>
-</div>
-</div>
-
-<script type="module">
-const {PoseLandmarker,FilesetResolver,DrawingUtils}=window.vision;
-
-const video=document.getElementById("video");
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
-const loading=document.getElementById("loading");
-
-const ui={
-neck:["neckV","neckB"],
-shoulder:["shoulderV","shoulderB"],
-arms:["armsV","armsB"],
-legs:["legsV","legsB"],
-total:["totalV","totalB"]
-};
-
-function color(p){return p>80?"red":p>60?"orange":p>35?"yellow":"green";}
-function setUI(k,v){
-const [val,bar]=ui[k].map(id=>document.getElementById(id));
-val.textContent=Math.round(v)+"%";
-bar.style.width=v+"%";
-bar.className="fill "+color(v);
+/* ---------- Math Helpers ---------- */
+function distance(a, b) {
+  return Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2);
 }
 
-function angle(a,b,c){
-const v1={x:a.x-b.x,y:a.y-b.y},v2={x:c.x-b.x,y:c.y-b.y};
-return Math.abs(Math.atan2(v1.x*v2.y-v1.y*v2.x,v1.x*v2.x+v1.y*v2.y)*180/Math.PI);
+function calculateAngle(a, b, c) {
+  const ab = distance(a, b);
+  const bc = distance(b, c);
+  const ac = distance(a, c);
+
+  const angle = Math.acos(
+    (ab*ab + bc*bc - ac*ac) / (2 * ab * bc)
+  );
+
+  return angle * (180 / Math.PI);
 }
 
-function calcStress(lm){
-const sw=Math.abs(lm[11].x-lm[12].x);
-const midS=(lm[11].y+lm[12].y)/2;
+/* ---------- Camera ---------- */
+navigator.mediaDevices.getUserMedia({
+  video: { facingMode: { exact: "environment" } },
+  audio: false
+}).then(stream => video.srcObject = stream);
 
-// Neck
-const neck=Math.max(0,Math.min(100,((midS-lm[0].y)/sw-0.3)/0.4*100));
-
-// Shoulder
-const shoulder=Math.min(100,(Math.abs(lm[11].y-lm[12].y)/sw)*700);
-
-// Arms
-const arms=Math.max(
-angle(lm[11],lm[13],lm[15])<70?(70-angle(lm[11],lm[13],lm[15]))*2:0,
-angle(lm[12],lm[14],lm[16])<70?(70-angle(lm[12],lm[14],lm[16]))*2:0
-);
-
-// Legs
-const legs=Math.max(
-angle(lm[23],lm[25],lm[27])<135?(135-angle(lm[23],lm[25],lm[27]))*1.5:0,
-angle(lm[24],lm[26],lm[28])<135?(135-angle(lm[24],lm[26],lm[28]))*1.5:0
-);
-
-const total=Math.min(100,neck*.35+shoulder*.2+arms*.2+legs*.25);
-return{neck,shoulder,arms,legs,total};
-}
-
-function resize(){
-canvas.width=video.videoWidth;
-canvas.height=video.videoHeight;
-}
-
-const draw=new DrawingUtils(ctx);
-let landmarker,lastTime=-1;
-
-async function loop(){
-if(video.currentTime!==lastTime){
-lastTime=video.currentTime;
-const r=await landmarker.detectForVideo(video,performance.now());
-ctx.clearRect(0,0,canvas.width,canvas.height);
-if(r.landmarks?.[0]){
-const s=calcStress(r.landmarks[0]);
-Object.keys(s).forEach(k=>setUI(k,s[k]));
-draw.drawConnectors(r.landmarks[0],PoseLandmarker.POSE_CONNECTIONS,{
-color:`rgba(255,59,48,${s.total/100})`,lineWidth:4
-});
-draw.drawLandmarks(r.landmarks[0],{color:"#fff",radius:4});
-}
-}
-requestAnimationFrame(loop);
-}
-
-(async()=>{
-const fs=await FilesetResolver.forVisionTasks(
-"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-);
-
-landmarker=await PoseLandmarker.createFromOptions(fs,{
-baseOptions:{
-modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-delegate:"GPU"
-},
-runningMode:"VIDEO",
-numPoses:1
+/* ---------- Load Models ---------- */
+let cocoModel;
+cocoSsd.load().then(m => {
+  cocoModel = m;
+  info.innerText = "COCO-SSD Loaded";
 });
 
-video.srcObject=await navigator.mediaDevices.getUserMedia({
-video:{facingMode:{ideal:"environment"}}
+/* ---------- MediaPipe Pose ---------- */
+const pose = new Pose({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
 
-await video.play();
-
-await new Promise(r=>{
-video.onloadedmetadata=()=>{resize();r();}
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
 });
 
-loading.style.display="none";
-loop();
-})();
+pose.onResults(onPose);
+
+/* ---------- Main Loop ---------- */
+async function detect() {
+  if (video.readyState === 4 && cocoModel) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    /* COCO-SSD Bounding Box */
+    const predictions = await cocoModel.detect(video);
+    predictions.forEach(p => {
+      if (p.class === "person") {
+        ctx.strokeStyle = "lime";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(...p.bbox);
+      }
+    });
+
+    await pose.send({ image: video });
+  }
+  requestAnimationFrame(detect);
+}
+
+/* ---------- Pose Results ---------- */
+function onPose(results) {
+  if (!results.poseLandmarks) return;
+
+  const lm = results.poseLandmarks;
+
+  // Left arm landmarks
+  const shoulder = lm[11];
+  const elbow = lm[13];
+  const wrist = lm[15];
+
+  const angle = calculateAngle(shoulder, elbow, wrist);
+
+  // Draw skeleton points
+  [shoulder, elbow, wrist].forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x * canvas.width, p.y * canvas.height, 6, 0, Math.PI*2);
+    ctx.fillStyle = "red";
+    ctx.fill();
+  });
+
+  // Draw lines
+  ctx.strokeStyle = "yellow";
+  ctx.beginPath();
+  ctx.moveTo(shoulder.x*canvas.width, shoulder.y*canvas.height);
+  ctx.lineTo(elbow.x*canvas.width, elbow.y*canvas.height);
+  ctx.lineTo(wrist.x*canvas.width, wrist.y*canvas.height);
+  ctx.stroke();
+
+  info.innerText = `Elbow Angle: ${angle.toFixed(1)}°`;
+}
+
+video.onloadeddata = () => detect();
 </script>
 </body>
 </html>
