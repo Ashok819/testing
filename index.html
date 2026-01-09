@@ -1,130 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>COCO + MediaPipe Stress Skeleton (Back Camera)</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AI Posture Analytics</title>
 
-<!-- TFJS + COCO-SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
-<!-- MediaPipe Pose -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
 
 <style>
-  body { margin:0; background:#000; overflow:hidden; }
-  video { display:none; }
-  canvas { position:fixed; inset:0; }
+:root {
+--accent: #34C759;
+--danger: #FF3B30;
+}
+body { margin: 0; background: #000; overflow: hidden; font-family: -apple-system, sans-serif; }
+
+/* Mirror effect for natural interaction */
+video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; visibility: hidden; }
+canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); }
+
+#ui-layer {
+position: fixed;
+top: 0; left: 0; width: 100%; height: 100%;
+display: flex; flex-direction: column; justify-content: space-between;
+pointer-events: none; padding: 20px; box-sizing: border-box;
+}
+
+.glass-panel {
+background: rgba(0, 0, 0, 0.5);
+backdrop-filter: blur(15px);
+-webkit-backdrop-filter: blur(15px);
+border: 1px solid rgba(255,255,255,0.1);
+border-radius: 15px; color: white; padding: 15px;
+pointer-events: auto;
+}
+
+#status-bar { display: flex; justify-content: space-between; align-items: center; }
+#analytics { display: flex; gap: 10px; }
+.stat { text-align: center; flex: 1; }
+.stat-val { font-size: 1.2rem; font-weight: bold; display: block; }
+.stat-label { font-size: 0.7rem; text-transform: uppercase; opacity: 0.7; }
+
+#alert-box {
+text-align: center; font-weight: bold; padding: 10px;
+transition: all 0.3s; opacity: 0; transform: translateY(20px);
+}
+#alert-box.active { opacity: 1; transform: translateY(0); background: var(--danger); }
 </style>
 </head>
-
 <body>
-<video id="video" autoplay playsinline muted></video>
+
+<video id="video"></video>
 <canvas id="canvas"></canvas>
 
+<div id="ui-layer">
+<div id="status-bar" class="glass-panel">
+<div>AI Posture Lab</div>
+<div id="connection-dot" style="color: var(--danger)">● Offline</div>
+</div>
+
+<div id="alert-box" class="glass-panel">FIX YOUR POSTURE</div>
+
+<div id="analytics" class="glass-panel">
+<div class="stat">
+<span id="score-val" class="stat-val">100%</span>
+<span class="stat-label">Health Score</span>
+</div>
+<div class="stat" style="border-left: 1px solid rgba(255,255,255,0.2)">
+<span id="stress-val" class="stat-val">0s</span>
+<span class="stat-label">Stress Time</span>
+</div>
+</div>
+</div>
+
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+// --- Analytics State ---
+let totalActiveTime = 0;
+let totalStressTime = 0;
+let lastTimestamp = Date.now();
+let badPostureBuffer = 0; // For smoothing
 
-let cocoModel;
-
-// ================= CAMERA (BACK) =================
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: { exact: "environment" } },
-  audio: false
-}).then(stream => {
-  video.srcObject = stream;
-  video.onloadedmetadata = () => video.play();
-}).catch(err => alert("Camera error: " + err.name));
-
-// ================= LOAD COCO =================
-(async () => {
-  cocoModel = await cocoSsd.load();
-  console.log("COCO-SSD loaded");
-})();
-
-// ================= MEDIAPIPE POSE =================
+// --- Initialization ---
 const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
 });
 
 pose.setOptions({
-  modelComplexity: 1,
-  smoothLandmarks: true
+modelComplexity: 1,
+smoothLandmarks: true,
+minDetectionConfidence: 0.5,
+minTrackingConfidence: 0.5
 });
 
-// ================= UTILS =================
-function angle(a,b,c){
-  const ab={x:a.x-b.x,y:a.y-b.y};
-  const cb={x:c.x-b.x,y:c.y-b.y};
-  const dot=ab.x*cb.x+ab.y*cb.y;
-  const mag=Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y);
-  return Math.acos(dot/mag)*180/Math.PI;
-}
-function stress(lm,a,b,c,min,max){
-  const ang=angle(lm[a],lm[b],lm[c]);
-  return ang<min || ang>max;
-}
-function bone(p1,p2,isStress){
-  ctx.strokeStyle=isStress?"red":"lime";
-  ctx.lineWidth=isStress?5:2;
-  ctx.beginPath();
-  ctx.moveTo(p1.x*canvas.width,p1.y*canvas.height);
-  ctx.lineTo(p2.x*canvas.width,p2.y*canvas.height);
-  ctx.stroke();
-}
+pose.onResults(onResults);
 
-// ================= POSE RESULT =================
-pose.onResults(r=>{
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  if(!r.poseLandmarks) return;
-  const lm=r.poseLandmarks;
-
-  // ---- STRESS RULES ----
-  const elbowL = stress(lm,11,13,15,30,160);
-  const elbowR = stress(lm,12,14,16,30,160);
-  const kneeL  = stress(lm,23,25,27,40,170);
-  const kneeR  = stress(lm,24,26,28,40,170);
-  const neck   = (lm[0].y - lm[12].y) > 0.18;
-
-  // ---- SKELETON ----
-  bone(lm[11],lm[13],elbowL); bone(lm[13],lm[15],elbowL);
-  bone(lm[12],lm[14],elbowR); bone(lm[14],lm[16],elbowR);
-  bone(lm[23],lm[25],kneeL);  bone(lm[25],lm[27],kneeL);
-  bone(lm[24],lm[26],kneeR);  bone(lm[26],lm[28],kneeR);
-  bone(lm[11],lm[12],neck);   // shoulders
-  bone(lm[11],lm[23],false);  // spine
-  bone(lm[12],lm[24],false);
-
-  // head
-  ctx.fillStyle=neck?"red":"lime";
-  ctx.beginPath();
-  ctx.arc(lm[0].x*canvas.width,lm[0].y*canvas.height,6,0,Math.PI*2);
-  ctx.fill();
+const camera = new Camera(video, {
+onFrame: async () => { await pose.send({image: video}); },
+width: 640, height: 480
 });
 
-// ================= MAIN LOOP =================
-async function loop(){
-  if(cocoModel){
-    const preds = await cocoModel.detect(video);
-    const person = preds.find(p=>p.class==="person" && p.score>0.5);
-    if(person){
-      // draw bbox
-      const [x,y,w,h]=person.bbox;
-      ctx.strokeStyle="yellow";
-      ctx.lineWidth=2;
-      ctx.strokeRect(x,y,w,h);
-    }
-  }
-  await pose.send({image:video});
-  requestAnimationFrame(loop);
+camera.start().then(() => {
+document.getElementById('connection-dot').innerText = "● Live";
+document.getElementById('connection-dot').style.color = "var(--accent)";
+});
+
+// --- Math Helpers ---
+function getAngle(a, b, c) {
+const ang = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+let degree = Math.abs(ang * 180 / Math.PI);
+return degree > 180 ? 360 - degree : degree;
 }
-loop();
+
+function drawBone(a, b, stressed) {
+ctx.beginPath();
+ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+ctx.lineWidth = stressed ? 6 : 3;
+ctx.strokeStyle = stressed ? "#FF3B30" : "#34C759";
+ctx.stroke();
+}
+
+// --- Core Loop ---
+function onResults(results) {
+if (canvas.width !== video.videoWidth) {
+canvas.width = video.videoWidth;
+canvas.height = video.videoHeight;
+}
+
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+if (!results.poseLandmarks) return;
+
+const lm = results.poseLandmarks;
+const now = Date.now();
+const dt = (now - lastTimestamp) / 1000;
+lastTimestamp = now;
+totalActiveTime += dt;
+
+// 1. Analyze Neck (Proportional to Shoulder Width)
+const shoulderWidth = Math.abs(lm[11].x - lm[12].x);
+const neckDepth = ((lm[11].y + lm[12].y) / 2) - lm[0].y;
+const isNeckStressed = (neckDepth / shoulderWidth) < 0.45;
+
+// 2. Analyze Elbows
+const angL = getAngle(lm[11], lm[13], lm[15]);
+const angR = getAngle(lm[12], lm[14], lm[16]);
+const isElbowStressed = (angL < 40 || angR < 40);
+
+const isCurrentlyStressed = isNeckStressed || isElbowStressed;
+
+// 3. Accumulate Time-on-Target
+if (isCurrentlyStressed) {
+totalStressTime += dt;
+badPostureBuffer++;
+} else {
+badPostureBuffer = Math.max(0, badPostureBuffer - 1);
+}
+
+// 4. Update UI & Haptics
+const healthScore = Math.max(0, 100 - ((totalStressTime / totalActiveTime) * 100));
+document.getElementById('score-val').innerText = `${Math.round(healthScore)}%`;
+document.getElementById('stress-val').innerText = `${Math.round(totalStressTime)}s`;
+
+const alertBox = document.getElementById('alert-box');
+if (badPostureBuffer > 20) { // Trigger alert after ~1 second of bad posture
+alertBox.classList.add('active');
+if (badPostureBuffer === 21 && navigator.vibrate) navigator.vibrate(200);
+} else {
+alertBox.classList.remove('active');
+}
+
+// 5. Visualize
+drawBone(lm[11], lm[13], isElbowStressed);
+drawBone(lm[13], lm[15], isElbowStressed);
+drawBone(lm[12], lm[14], isElbowStressed);
+drawBone(lm[14], lm[16], isElbowStressed);
+drawBone(lm[11], lm[12], isNeckStressed); // Shoulder line represents neck health
+
+// Nose indicator
+ctx.fillStyle = isNeckStressed ? "red" : "lime";
+ctx.beginPath();
+ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 6, 0, 2*Math.PI);
+ctx.fill();
+}
 </script>
 </body>
 </html>
