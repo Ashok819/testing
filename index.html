@@ -1,28 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Stress Detection Skeleton (COCO + MediaPipe)</title>
+<meta charset="UTF-8" />
+<title>COCO + MediaPipe Stress Skeleton (Back Camera)</title>
 
-  <!-- TensorFlow -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+<!-- TFJS + COCO-SSD -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-  <!-- COCO SSD -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+<!-- MediaPipe Pose -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
 
-  <!-- MediaPipe Pose -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-
-  <style>
-    body { margin:0; background:black; }
-    canvas { position:absolute; top:0; left:0; }
-    video { display:none; }
-  </style>
+<style>
+  body { margin:0; background:#000; overflow:hidden; }
+  video { display:none; }
+  canvas { position:fixed; inset:0; }
+</style>
 </head>
 
 <body>
-
-<video id="video"></video>
+<video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
 
 <script>
@@ -35,35 +32,22 @@ canvas.height = window.innerHeight;
 
 let cocoModel;
 
-// ================== ANGLE UTILS ==================
-function angle(a, b, c) {
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
+// ================= CAMERA (BACK) =================
+navigator.mediaDevices.getUserMedia({
+  video: { facingMode: { exact: "environment" } },
+  audio: false
+}).then(stream => {
+  video.srcObject = stream;
+  video.onloadedmetadata = () => video.play();
+}).catch(err => alert("Camera error: " + err.name));
 
-  const dot = ab.x * cb.x + ab.y * cb.y;
-  const mag1 = Math.hypot(ab.x, ab.y);
-  const mag2 = Math.hypot(cb.x, cb.y);
+// ================= LOAD COCO =================
+(async () => {
+  cocoModel = await cocoSsd.load();
+  console.log("COCO-SSD loaded");
+})();
 
-  return Math.acos(dot / (mag1 * mag2)) * 180 / Math.PI;
-}
-
-// ================== STRESS CHECK ==================
-function stressed(lm, a, b, c, min, max) {
-  const ang = angle(lm[a], lm[b], lm[c]);
-  return ang < min || ang > max;
-}
-
-// ================== DRAW BONE ==================
-function drawBone(a, b, stress=false) {
-  ctx.strokeStyle = stress ? "red" : "lime";
-  ctx.lineWidth = stress ? 5 : 2;
-  ctx.beginPath();
-  ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-  ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-  ctx.stroke();
-}
-
-// ================== POSE ==================
+// ================= MEDIAPIPE POSE =================
 const pose = new Pose({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
@@ -73,62 +57,74 @@ pose.setOptions({
   smoothLandmarks: true
 });
 
-pose.onResults(results => {
+// ================= UTILS =================
+function angle(a,b,c){
+  const ab={x:a.x-b.x,y:a.y-b.y};
+  const cb={x:c.x-b.x,y:c.y-b.y};
+  const dot=ab.x*cb.x+ab.y*cb.y;
+  const mag=Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y);
+  return Math.acos(dot/mag)*180/Math.PI;
+}
+function stress(lm,a,b,c,min,max){
+  const ang=angle(lm[a],lm[b],lm[c]);
+  return ang<min || ang>max;
+}
+function bone(p1,p2,isStress){
+  ctx.strokeStyle=isStress?"red":"lime";
+  ctx.lineWidth=isStress?5:2;
+  ctx.beginPath();
+  ctx.moveTo(p1.x*canvas.width,p1.y*canvas.height);
+  ctx.lineTo(p2.x*canvas.width,p2.y*canvas.height);
+  ctx.stroke();
+}
+
+// ================= POSE RESULT =================
+pose.onResults(r=>{
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  if(!r.poseLandmarks) return;
+  const lm=r.poseLandmarks;
 
-  if (!results.poseLandmarks) return;
-  const lm = results.poseLandmarks;
+  // ---- STRESS RULES ----
+  const elbowL = stress(lm,11,13,15,30,160);
+  const elbowR = stress(lm,12,14,16,30,160);
+  const kneeL  = stress(lm,23,25,27,40,170);
+  const kneeR  = stress(lm,24,26,28,40,170);
+  const neck   = (lm[0].y - lm[12].y) > 0.18;
 
-  // -------- Stress Rules ----------
-  const elbowL = stressed(lm, 11,13,15, 30,160);
-  const elbowR = stressed(lm, 12,14,16, 30,160);
-  const kneeL  = stressed(lm, 23,25,27, 40,170);
-  const kneeR  = stressed(lm, 24,26,28, 40,170);
+  // ---- SKELETON ----
+  bone(lm[11],lm[13],elbowL); bone(lm[13],lm[15],elbowL);
+  bone(lm[12],lm[14],elbowR); bone(lm[14],lm[16],elbowR);
+  bone(lm[23],lm[25],kneeL);  bone(lm[25],lm[27],kneeL);
+  bone(lm[24],lm[26],kneeR);  bone(lm[26],lm[28],kneeR);
+  bone(lm[11],lm[12],neck);   // shoulders
+  bone(lm[11],lm[23],false);  // spine
+  bone(lm[12],lm[24],false);
 
-  const neckStress = lm[0].y - lm[12].y > 0.18;
-
-  // -------- Skeleton ----------
-  drawBone(lm[11], lm[13], elbowL);
-  drawBone(lm[13], lm[15], elbowL);
-
-  drawBone(lm[12], lm[14], elbowR);
-  drawBone(lm[14], lm[16], elbowR);
-
-  drawBone(lm[23], lm[25], kneeL);
-  drawBone(lm[25], lm[27], kneeL);
-
-  drawBone(lm[24], lm[26], kneeR);
-  drawBone(lm[26], lm[28], kneeR);
-
-  drawBone(lm[11], lm[12], neckStress); // shoulders
-  drawBone(lm[12], lm[24], false);
-  drawBone(lm[11], lm[23], false);
-
-  // -------- HEAD ----------
-  ctx.fillStyle = neckStress ? "red" : "lime";
+  // head
+  ctx.fillStyle=neck?"red":"lime";
   ctx.beginPath();
-  ctx.arc(lm[0].x*canvas.width, lm[0].y*canvas.height, 6, 0, Math.PI*2);
+  ctx.arc(lm[0].x*canvas.width,lm[0].y*canvas.height,6,0,Math.PI*2);
   ctx.fill();
 });
 
-// ================== CAMERA ==================
-const camera = new Camera(video, {
-  facingMode: "environment", // BACK CAMERA
-  width: canvas.width,
-  height: canvas.height,
-  onFrame: async () => {
-    await pose.send({image: video});
+// ================= MAIN LOOP =================
+async function loop(){
+  if(cocoModel){
+    const preds = await cocoModel.detect(video);
+    const person = preds.find(p=>p.class==="person" && p.score>0.5);
+    if(person){
+      // draw bbox
+      const [x,y,w,h]=person.bbox;
+      ctx.strokeStyle="yellow";
+      ctx.lineWidth=2;
+      ctx.strokeRect(x,y,w,h);
+    }
   }
-});
-camera.start();
-
-// ================== COCO SSD ==================
-(async () => {
-  cocoModel = await cocoSsd.load();
-  console.log("COCO SSD Loaded");
-})();
+  await pose.send({image:video});
+  requestAnimationFrame(loop);
+}
+loop();
 </script>
-
 </body>
 </html>
