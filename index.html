@@ -1,174 +1,183 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Yoga Pose – 30s Timer</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>All-in-One AI Camera</title>
 
-<!-- TensorFlow + COCO SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0"></script>
+<!-- TensorFlow -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<!-- MediaPipe Pose -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3"></script>
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
 
 <style>
-body { margin:0; overflow:hidden; background:black; }
-video, canvas {
-  position:absolute;
-  width:100vw;
-  height:100vh;
-  object-fit:cover;
-  transform: scaleX(-1); /* front camera mirror */
+body {
+  margin: 0;
+  background: #000;
+  color: #0f0;
+  font-family: Arial, sans-serif;
+  text-align: center;
 }
-#timer {
+video, canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+}
+#photo {
   position: fixed;
-  top: 16px;
+  bottom: 10px;
+  right: 10px;
+  width: 120px;
+  border: 2px solid #0f0;
+}
+#status {
+  position: fixed;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 28px;
-  font-weight: bold;
-  color: white;
-  padding: 6px 16px;
-  border-radius: 20px;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.6);
+  padding: 6px 12px;
+  border-radius: 8px;
 }
 </style>
 </head>
 
 <body>
-<div id="timer">⏱ 0.0 s</div>
-<video id="video" autoplay playsinline muted></video>
+<div id="status">Initializing…</div>
+<video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
+<img id="photo"/>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const timerEl = document.getElementById("timer");
+const statusBox = document.getElementById("status");
+const photo = document.getElementById("photo");
 
-let cocoModel, pose;
-let activeBox = null;
+let cocoModel;
+let blinkFrames = 0;
+let captured = false;
 
-/* TIMER STATE */
-let holdStart = null;
-let holdSeconds = 0;
-const TARGET_TIME = 30;
-
-/* CAMERA – FRONT */
-async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user" },
-    audio: false
-  });
+// ---------- CAMERA ----------
+navigator.mediaDevices.getUserMedia({
+  video: { facingMode: "user", width: 640, height: 480 }
+}).then(stream => {
   video.srcObject = stream;
-  return new Promise(r => video.onloadedmetadata = r);
-}
+});
 
-/* ANGLE */
-function angle(a,b,c){
-  const ab={x:a.x-b.x,y:a.y-b.y};
-  const cb={x:c.x-b.x,y:c.y-b.y};
-  const dot=ab.x*cb.x+ab.y*cb.y;
-  const mag=Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y);
-  return Math.acos(dot/mag)*180/Math.PI;
-}
+// ---------- COCO SSD ----------
+cocoSsd.load().then(m => {
+  cocoModel = m;
+  statusBox.innerText = "COCO-SSD loaded";
+});
 
-/* TADASANA CHECK */
-function isTadasana(lm){
-  const ls=lm[11], rs=lm[12];
-  const lh=lm[23], rh=lm[24];
-  const lk=lm[25], rk=lm[26];
-  const la=lm[27], ra=lm[28];
+// ---------- FACE MESH ----------
+const faceMesh = new FaceMesh({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+});
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true
+});
+faceMesh.onResults(onFace);
 
-  return (
-    Math.abs(ls.y-rs.y)<0.03 &&
-    Math.abs(lh.y-rh.y)<0.03 &&
-    angle(lh,lk,la)>165 &&
-    angle(rh,rk,ra)>165
-  );
-}
+// ---------- POSE ----------
+const pose = new Pose({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+});
+pose.setOptions({ modelComplexity: 1 });
+pose.onResults(onPose);
 
-/* POSE INIT */
-function initPose(){
-  pose = new Pose({
-    locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`
-  });
-  pose.setOptions({
-    modelComplexity:1,
-    smoothLandmarks:true,
-    minDetectionConfidence:0.5,
-    minTrackingConfidence:0.5
-  });
-  pose.onResults(onPose);
-}
+// ---------- HANDS ----------
+const hands = new Hands({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+});
+hands.setOptions({ maxNumHands: 2 });
+hands.onResults(onHands);
 
-/* DRAW + TIMER */
-function onPose(res){
-  if(!activeBox || !res.poseLandmarks) return;
+// ---------- CAMERA LOOP ----------
+const camera = new Camera(video, {
+  onFrame: async () => {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  const matched = isTadasana(res.poseLandmarks);
+    if (!cocoModel) return;
 
-  /* TIMER LOGIC */
-  if(matched){
-    if(!holdStart) holdStart = performance.now();
-    holdSeconds = (performance.now() - holdStart) / 1000;
+    const predictions = await cocoModel.detect(video);
+    const person = predictions.find(p => p.class === "person" && p.score > 0.6);
+
+    if (person) {
+      statusBox.innerText = "Person detected";
+      await faceMesh.send({ image: video });
+      await pose.send({ image: video });
+      await hands.send({ image: video });
+    } else {
+      statusBox.innerText = "No person";
+    }
+  },
+  width: 640,
+  height: 480
+});
+camera.start();
+
+// ---------- FACE + BLINK ----------
+function onFace(res) {
+  if (!res.multiFaceLandmarks) return;
+
+  const lm = res.multiFaceLandmarks[0];
+  drawConnectors(ctx, lm, FACEMESH_TESSELATION, { color: "#00ffff", lineWidth: 1 });
+
+  // LEFT eye landmarks
+  const top = lm[159];
+  const bottom = lm[145];
+  const left = lm[33];
+  const right = lm[133];
+
+  const v = Math.hypot(top.x - bottom.x, top.y - bottom.y);
+  const h = Math.hypot(left.x - right.x, left.y - right.y);
+  const EAR = v / h;
+
+  if (EAR < 0.18) {
+    blinkFrames++;
+    if (blinkFrames > 3 && !captured) capturePhoto();
   } else {
-    holdStart = null;
-    holdSeconds = 0;
+    blinkFrames = 0;
   }
-
-  const done = holdSeconds >= TARGET_TIME;
-  const color = done ? "#00ff00" : matched ? "#00ff00" : "#ff0000";
-
-  timerEl.textContent = done
-    ? "✅ Pose Completed"
-    : `⏱ ${holdSeconds.toFixed(1)} s`;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(activeBox.x,activeBox.y,activeBox.w,activeBox.h);
-  ctx.clip();
-
-  drawConnectors(ctx,res.poseLandmarks,POSE_CONNECTIONS,{color,lineWidth:3});
-  drawLandmarks(ctx,res.poseLandmarks,{color,lineWidth:2});
-
-  ctx.restore();
 }
 
-/* MAIN */
-(async()=>{
-  await setupCamera();
-  video.play();
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+// ---------- POSE ----------
+function onPose(res) {
+  if (!res.poseLandmarks) return;
+  drawConnectors(ctx, res.poseLandmarks, POSE_CONNECTIONS, { color: "#00ff00" });
+  drawLandmarks(ctx, res.poseLandmarks, { color: "#ff0000", radius: 3 });
+}
 
-  cocoModel = await cocoSsd.load();
-  initPose();
-
-  async function loop(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(video,0,0,canvas.width,canvas.height);
-
-    const preds = await cocoModel.detect(video);
-    activeBox = null;
-
-    preds.forEach(p=>{
-      if(p.class==="person" && p.score>0.5){
-        const [x,y,w,h]=p.bbox;
-        activeBox={x,y,w,h};
-        ctx.strokeStyle="#00ff00";
-        ctx.lineWidth=2;
-        ctx.strokeRect(x,y,w,h);
-      }
-    });
-
-    await pose.send({image:video});
-    requestAnimationFrame(loop);
+// ---------- HANDS ----------
+function onHands(res) {
+  if (!res.multiHandLandmarks) return;
+  for (const hand of res.multiHandLandmarks) {
+    drawConnectors(ctx, hand, HAND_CONNECTIONS, { color: "#ffff00" });
+    drawLandmarks(ctx, hand, { color: "#ff00ff", radius: 4 });
   }
-  loop();
-})();
+}
+
+// ---------- CAPTURE ----------
+function capturePhoto() {
+  captured = true;
+  photo.src = canvas.toDataURL("image/png");
+  statusBox.innerText = "📸 Blink detected – Photo captured";
+}
 </script>
 </body>
 </html>
+
