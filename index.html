@@ -1,152 +1,93 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>COCO-SSD + MediaPipe Pose Angle Detection</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>COCO-SSD Person Bounding Box</title>
 
-<!-- TensorFlow -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0"></script>
+  <!-- COCO SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<!-- MediaPipe Pose -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-
-<style>
-body {
-  margin: 0;
-  background: black;
-  overflow: hidden;
-}
-video, canvas {
-  position: absolute;
-  width: 100vw;
-  height: 100vh;
-  object-fit: cover;
-}
-#info {
-  position: fixed;
-  bottom: 10px;
-  left: 10px;
-  color: #00ffcc;
-  font-size: 16px;
-  font-family: monospace;
-}
-</style>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+    }
+    video, canvas {
+      position: absolute;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+    }
+  </style>
 </head>
-
 <body>
-<video id="video" autoplay playsinline></video>
+
+<video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
-<div id="info">Loading models…</div>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const info = document.getElementById("info");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { exact: "environment" } },
+    audio: false
+  });
+  video.srcObject = stream;
 
-/* ---------- Math Helpers ---------- */
-function distance(a, b) {
-  return Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2);
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      resolve(video);
+    };
+  });
 }
 
-function calculateAngle(a, b, c) {
-  const ab = distance(a, b);
-  const bc = distance(b, c);
-  const ac = distance(a, c);
+async function main() {
+  await setupCamera();
+  video.play();
 
-  const angle = Math.acos(
-    (ab*ab + bc*bc - ac*ac) / (2 * ab * bc)
-  );
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
 
-  return angle * (180 / Math.PI);
-}
+  const model = await cocoSsd.load();
 
-/* ---------- Camera ---------- */
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: { exact: "environment" } },
-  audio: false
-}).then(stream => video.srcObject = stream);
+  async function detect() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-/* ---------- Load Models ---------- */
-let cocoModel;
-cocoSsd.load().then(m => {
-  cocoModel = m;
-  info.innerText = "COCO-SSD Loaded";
-});
+    const predictions = await model.detect(video);
 
-/* ---------- MediaPipe Pose ---------- */
-const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
-});
-
-pose.setOptions({
-  modelComplexity: 1,
-  smoothLandmarks: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
-
-pose.onResults(onPose);
-
-/* ---------- Main Loop ---------- */
-async function detect() {
-  if (video.readyState === 4 && cocoModel) {
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    /* COCO-SSD Bounding Box */
-    const predictions = await cocoModel.detect(video);
     predictions.forEach(p => {
       if (p.class === "person") {
+        const [x, y, w, h] = p.bbox;
+
         ctx.strokeStyle = "lime";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(...p.bbox);
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+
+        ctx.fillStyle = "lime";
+        ctx.font = "16px Arial";
+        ctx.fillText(
+          `Person ${(p.score * 100).toFixed(1)}%`,
+          x,
+          y > 20 ? y - 5 : y + 20
+        );
       }
     });
 
-    await pose.send({ image: video });
+    requestAnimationFrame(detect);
   }
-  requestAnimationFrame(detect);
+
+  detect();
 }
 
-/* ---------- Pose Results ---------- */
-function onPose(results) {
-  if (!results.poseLandmarks) return;
-
-  const lm = results.poseLandmarks;
-
-  // Left arm landmarks
-  const shoulder = lm[11];
-  const elbow = lm[13];
-  const wrist = lm[15];
-
-  const angle = calculateAngle(shoulder, elbow, wrist);
-
-  // Draw skeleton points
-  [shoulder, elbow, wrist].forEach(p => {
-    ctx.beginPath();
-    ctx.arc(p.x * canvas.width, p.y * canvas.height, 6, 0, Math.PI*2);
-    ctx.fillStyle = "red";
-    ctx.fill();
-  });
-
-  // Draw lines
-  ctx.strokeStyle = "yellow";
-  ctx.beginPath();
-  ctx.moveTo(shoulder.x*canvas.width, shoulder.y*canvas.height);
-  ctx.lineTo(elbow.x*canvas.width, elbow.y*canvas.height);
-  ctx.lineTo(wrist.x*canvas.width, wrist.y*canvas.height);
-  ctx.stroke();
-
-  info.innerText = `Elbow Angle: ${angle.toFixed(1)}°`;
-}
-
-video.onloadeddata = () => detect();
+main();
 </script>
+
 </body>
 </html>
