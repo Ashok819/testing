@@ -3,16 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>COCO-SSD + MediaPipe Pose</title>
+<title>COCO-SSD 3D Cube Bounding Box</title>
 
 <!-- TensorFlow -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
-<!-- MediaPipe Pose -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3"></script>
 
 <style>
 body {
@@ -38,9 +33,7 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-let cocoModel;
-let pose;
-let personDetected = false;
+let model;
 
 /* CAMERA */
 async function setupCamera() {
@@ -52,82 +45,76 @@ async function setupCamera() {
   return new Promise(r => video.onloadedmetadata = r);
 }
 
-/* COCO SSD */
-async function loadCoco() {
-  cocoModel = await cocoSsd.load();
+/* DRAW 3D CUBE */
+function draw3DCube(x, y, w, h) {
+  const depth = Math.min(w, h) * 0.15;
+
+  const x2 = x + depth;
+  const y2 = y - depth;
+
+  ctx.strokeStyle = "#00ffcc";
+  ctx.lineWidth = 3;
+
+  // Front rectangle
+  ctx.strokeRect(x, y, w, h);
+
+  // Back rectangle
+  ctx.strokeRect(x2, y2, w, h);
+
+  // Connecting edges
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x2, y2);
+
+  ctx.moveTo(x + w, y);
+  ctx.lineTo(x2 + w, y2);
+
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x2, y2 + h);
+
+  ctx.moveTo(x + w, y + h);
+  ctx.lineTo(x2 + w, y2 + h);
+  ctx.stroke();
 }
 
-/* MEDIAPIPE POSE */
-function loadPose() {
-  pose = new Pose({
-    locateFile: file =>
-      `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${file}`
-  });
-
-  pose.setOptions({
-    modelComplexity: 1,
-    smoothLandmarks: true,
-    enableSegmentation: false,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
-
-  pose.onResults(onPoseResults);
-}
-
-/* DRAW POSE */
-function onPoseResults(results) {
-  if (!personDetected) return;
-
-  if (results.poseLandmarks) {
-    drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
-      { color: "#00FF00", lineWidth: 3 });
-    drawLandmarks(ctx, results.poseLandmarks,
-      { color: "#FF0000", lineWidth: 2 });
-  }
-}
-
-/* MAIN LOOP */
-async function detectFrame() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  const predictions = await cocoModel.detect(video);
-  personDetected = false;
-
-  predictions.forEach(p => {
-    if (p.class === "person" && p.score > 0.5) {
-      personDetected = true;
-      const [x, y, w, h] = p.bbox;
-
-      ctx.strokeStyle = "lime";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, w, h);
-
-      ctx.fillStyle = "lime";
-      ctx.font = "16px Arial";
-      ctx.fillText("Person", x, y > 20 ? y - 5 : y + 20);
-    }
-  });
-
-  await pose.send({ image: video });
-  requestAnimationFrame(detectFrame);
-}
-
-/* START */
-(async () => {
+/* MAIN */
+async function main() {
   await setupCamera();
   video.play();
 
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
 
-  await loadCoco();
-  loadPose();
+  model = await cocoSsd.load();
 
-  detectFrame();
-})();
+  async function detect() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const predictions = await model.detect(video);
+
+    predictions.forEach(p => {
+      if (p.class === "person" && p.score > 0.5) {
+        const [x, y, w, h] = p.bbox;
+        draw3DCube(x, y, w, h);
+
+        ctx.fillStyle = "#00ffcc";
+        ctx.font = "16px Arial";
+        ctx.fillText(
+          `Person ${(p.score * 100).toFixed(1)}%`,
+          x,
+          y > 20 ? y - 8 : y + 18
+        );
+      }
+    });
+
+    requestAnimationFrame(detect);
+  }
+
+  detect();
+}
+
+main();
 </script>
-
 </body>
 </html>
