@@ -1,191 +1,180 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>AI Posture Analytics</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>BioMetric Pose Scanner • Detailed Stress</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"></script>
 
 <style>
 :root {
---accent: #34C759;
---danger: #FF3B30;
+--primary:#00f2ff;--warning:#ffcc00;--danger:#ff3b30;--bg-dark:#0a0a0a;--glass:rgba(255,255,255,.08)
 }
-body { margin: 0; background: #000; overflow: hidden; font-family: -apple-system, sans-serif; }
-
-/* Mirror effect for natural interaction */
-video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; visibility: hidden; }
-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); }
-
-#ui-layer {
-position: fixed;
-top: 0; left: 0; width: 100%; height: 100%;
-display: flex; flex-direction: column; justify-content: space-between;
-pointer-events: none; padding: 20px; box-sizing: border-box;
+*{margin:0;padding:0;box-sizing:border-box}
+body{height:100dvh;background:var(--bg-dark);font-family:system-ui;color:#fff;overflow:hidden}
+#viewport{position:relative;width:100%;height:100%}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#ui{
+position:absolute;top:12px;right:12px;width:240px;max-height:85dvh;
+padding:16px;background:var(--glass);backdrop-filter:blur(16px);
+border-radius:16px;border:1px solid rgba(255,255,255,.12)
 }
-
-.glass-panel {
-background: rgba(0, 0, 0, 0.5);
-backdrop-filter: blur(15px);
--webkit-backdrop-filter: blur(15px);
-border: 1px solid rgba(255,255,255,0.1);
-border-radius: 15px; color: white; padding: 15px;
-pointer-events: auto;
+h1{font-size:13px;letter-spacing:2px;color:var(--primary);margin-bottom:14px}
+.region{margin-bottom:14px;padding:10px;background:rgba(0,0,0,.25);border-radius:10px}
+.region-label{font-size:11px;color:#aaa}
+.region-value{font-size:22px;font-family:monospace;font-weight:bold}
+.bar{height:6px;background:rgba(255,255,255,.15);border-radius:3px;margin-top:6px}
+.bar-fill{height:100%;width:0%;transition:.4s}
+.green{background:#4caf50}.yellow{background:#ffcc00}
+.orange{background:#ff9800}.red{background:#ff3b30}
+#loading{
+position:fixed;inset:0;background:#000;display:grid;place-items:center;z-index:999
 }
-
-#status-bar { display: flex; justify-content: space-between; align-items: center; }
-#analytics { display: flex; gap: 10px; }
-.stat { text-align: center; flex: 1; }
-.stat-val { font-size: 1.2rem; font-weight: bold; display: block; }
-.stat-label { font-size: 0.7rem; text-transform: uppercase; opacity: 0.7; }
-
-#alert-box {
-text-align: center; font-weight: bold; padding: 10px;
-transition: all 0.3s; opacity: 0; transform: translateY(20px);
+.spinner{
+width:56px;height:56px;border:6px solid #222;border-top:6px solid var(--primary);
+border-radius:50%;animation:spin 1s linear infinite
 }
-#alert-box.active { opacity: 1; transform: translateY(0); background: var(--danger); }
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
-<body>
 
-<video id="video"></video>
+<body>
+<div id="loading">
+  <div class="spinner"></div>
+  <div style="margin-top:20px;opacity:.7">ANALYZING POSTURE…</div>
+</div>
+
+<div id="viewport">
+<video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
 
-<div id="ui-layer">
-<div id="status-bar" class="glass-panel">
-<div>AI Posture Lab</div>
-<div id="connection-dot" style="color: var(--danger)">● Offline</div>
+<div id="ui">
+<h1>POSTURE STRESS</h1>
+
+<div class="region"><div class="region-label">NECK</div>
+<div id="neckValue" class="region-value">0%</div>
+<div class="bar"><div id="neckBar" class="bar-fill"></div></div></div>
+
+<div class="region"><div class="region-label">SHOULDERS</div>
+<div id="shoulderValue" class="region-value">0%</div>
+<div class="bar"><div id="shoulderBar" class="bar-fill"></div></div></div>
+
+<div class="region"><div class="region-label">ARMS</div>
+<div id="armsValue" class="region-value">0%</div>
+<div class="bar"><div id="armsBar" class="bar-fill"></div></div></div>
+
+<div class="region"><div class="region-label">LEGS</div>
+<div id="legsValue" class="region-value">0%</div>
+<div class="bar"><div id="legsBar" class="bar-fill"></div></div></div>
+
+<div class="region"><div class="region-label">OVERALL</div>
+<div id="totalValue" class="region-value">0%</div>
+<div class="bar"><div id="totalBar" class="bar-fill"></div></div></div>
+</div>
 </div>
 
-<div id="alert-box" class="glass-panel">FIX YOUR POSTURE</div>
+<script type="module">
+const {PoseLandmarker,FilesetResolver,DrawingUtils}=window.vision;
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const loading=document.getElementById('loading');
+let poseLandmarker,lastVideoTime=-1;
 
-<div id="analytics" class="glass-panel">
-<div class="stat">
-<span id="score-val" class="stat-val">100%</span>
-<span class="stat-label">Health Score</span>
-</div>
-<div class="stat" style="border-left: 1px solid rgba(255,255,255,0.2)">
-<span id="stress-val" class="stat-val">0s</span>
-<span class="stat-label">Stress Time</span>
-</div>
-</div>
-</div>
+const ui={
+neck:['neckValue','neckBar'],
+shoulder:['shoulderValue','shoulderBar'],
+arms:['armsValue','armsBar'],
+legs:['legsValue','legsBar'],
+total:['totalValue','totalBar']
+};
 
-<script>
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+function color(p){return p>80?'red':p>60?'orange':p>35?'yellow':'green'}
+function setUI(k,v){
+const[val,bar]=ui[k].map(id=>document.getElementById(id));
+val.textContent=Math.round(v)+'%';
+bar.style.width=v+'%';bar.className='bar-fill '+color(v);
+}
 
-// --- Analytics State ---
-let totalActiveTime = 0;
-let totalStressTime = 0;
-let lastTimestamp = Date.now();
-let badPostureBuffer = 0; // For smoothing
+function angle(a,b,c){
+const v1={x:a.x-b.x,y:a.y-b.y},v2={x:c.x-b.x,y:c.y-b.y};
+return Math.abs(Math.atan2(v1.x*v2.y-v1.y*v2.x,v1.x*v2.x+v1.y*v2.y)*180/Math.PI);
+}
 
-// --- Initialization ---
-const pose = new Pose({
-locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+function stress(lm){
+const shoulderW=Math.abs(lm[11].x-lm[12].x);
+const midSh=(lm[11].y+lm[12].y)/2;
+
+// Neck (stable)
+const neckRaw=(midSh-lm[0].y)/shoulderW;
+const neck=Math.max(0,Math.min(100,((neckRaw-0.3)/0.4)*100));
+
+// Shoulders (asymmetry + elevation)
+const asym=Math.abs(lm[11].y-lm[12].y)/shoulderW;
+const lift=Math.max(0,(midSh-lm[23].y)*3);
+const shoulder=Math.min(100,(asym*700)+(lift*40));
+
+// Arms
+const arms=Math.max(
+angle(lm[11],lm[13],lm[15])<70?(70-angle(lm[11],lm[13],lm[15]))*2:0,
+angle(lm[12],lm[14],lm[16])<70?(70-angle(lm[12],lm[14],lm[16]))*2:0
+);
+
+// Legs
+const legs=Math.max(
+angle(lm[23],lm[25],lm[27])<135?(135-angle(lm[23],lm[25],lm[27]))*1.5:0,
+angle(lm[24],lm[26],lm[28])<135?(135-angle(lm[24],lm[26],lm[28]))*1.5:0
+);
+
+const total=Math.min(100,neck*.35+shoulder*.2+arms*.2+legs*.25);
+return{neck,shoulder,arms,legs,total};
+}
+
+function resize(){
+const r=video.videoWidth/video.videoHeight;
+canvas.width=innerWidth;
+canvas.height=innerWidth/r;
+}
+addEventListener('resize',resize);
+
+const draw=new DrawingUtils(ctx);
+
+async function loop(){
+if(video.currentTime!==lastVideoTime){
+lastVideoTime=video.currentTime;
+const r=await poseLandmarker.detectForVideo(video,performance.now());
+ctx.clearRect(0,0,canvas.width,canvas.height);
+ctx.drawImage(video,0,0,canvas.width,canvas.height);
+if(r.landmarks?.[0]){
+const s=stress(r.landmarks[0]);
+Object.keys(s).forEach(k=>setUI(k,s[k]));
+draw.drawConnectors(r.landmarks[0],PoseLandmarker.POSE_CONNECTIONS,{
+color:`rgba(255,59,48,${s.total/100})`,lineWidth:4
 });
+draw.drawLandmarks(r.landmarks[0],{color:'#fff',radius:4});
+}
+}
+requestAnimationFrame(loop);
+}
 
-pose.setOptions({
-modelComplexity: 1,
-smoothLandmarks: true,
-minDetectionConfidence: 0.5,
-minTrackingConfidence: 0.5
+(async()=>{
+const fs=await FilesetResolver.forVisionTasks(
+"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+);
+poseLandmarker=await PoseLandmarker.createFromOptions(fs,{
+baseOptions:{modelAssetPath:
+"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+delegate:"GPU"},
+runningMode:"VIDEO",numPoses:1
 });
-
-pose.onResults(onResults);
-
-const camera = new Camera(video, {
-onFrame: async () => { await pose.send({image: video}); },
-width: 640, height: 480
+video.srcObject=await navigator.mediaDevices.getUserMedia({
+video:{facingMode:{ideal:"environment"}}
 });
-
-camera.start().then(() => {
-document.getElementById('connection-dot').innerText = "● Live";
-document.getElementById('connection-dot').style.color = "var(--accent)";
-});
-
-// --- Math Helpers ---
-function getAngle(a, b, c) {
-const ang = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-let degree = Math.abs(ang * 180 / Math.PI);
-return degree > 180 ? 360 - degree : degree;
-}
-
-function drawBone(a, b, stressed) {
-ctx.beginPath();
-ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-ctx.lineWidth = stressed ? 6 : 3;
-ctx.strokeStyle = stressed ? "#FF3B30" : "#34C759";
-ctx.stroke();
-}
-
-// --- Core Loop ---
-function onResults(results) {
-if (canvas.width !== video.videoWidth) {
-canvas.width = video.videoWidth;
-canvas.height = video.videoHeight;
-}
-
-ctx.clearRect(0, 0, canvas.width, canvas.height);
-if (!results.poseLandmarks) return;
-
-const lm = results.poseLandmarks;
-const now = Date.now();
-const dt = (now - lastTimestamp) / 1000;
-lastTimestamp = now;
-totalActiveTime += dt;
-
-// 1. Analyze Neck (Proportional to Shoulder Width)
-const shoulderWidth = Math.abs(lm[11].x - lm[12].x);
-const neckDepth = ((lm[11].y + lm[12].y) / 2) - lm[0].y;
-const isNeckStressed = (neckDepth / shoulderWidth) < 0.45;
-
-// 2. Analyze Elbows
-const angL = getAngle(lm[11], lm[13], lm[15]);
-const angR = getAngle(lm[12], lm[14], lm[16]);
-const isElbowStressed = (angL < 40 || angR < 40);
-
-const isCurrentlyStressed = isNeckStressed || isElbowStressed;
-
-// 3. Accumulate Time-on-Target
-if (isCurrentlyStressed) {
-totalStressTime += dt;
-badPostureBuffer++;
-} else {
-badPostureBuffer = Math.max(0, badPostureBuffer - 1);
-}
-
-// 4. Update UI & Haptics
-const healthScore = Math.max(0, 100 - ((totalStressTime / totalActiveTime) * 100));
-document.getElementById('score-val').innerText = `${Math.round(healthScore)}%`;
-document.getElementById('stress-val').innerText = `${Math.round(totalStressTime)}s`;
-
-const alertBox = document.getElementById('alert-box');
-if (badPostureBuffer > 20) { // Trigger alert after ~1 second of bad posture
-alertBox.classList.add('active');
-if (badPostureBuffer === 21 && navigator.vibrate) navigator.vibrate(200);
-} else {
-alertBox.classList.remove('active');
-}
-
-// 5. Visualize
-drawBone(lm[11], lm[13], isElbowStressed);
-drawBone(lm[13], lm[15], isElbowStressed);
-drawBone(lm[12], lm[14], isElbowStressed);
-drawBone(lm[14], lm[16], isElbowStressed);
-drawBone(lm[11], lm[12], isNeckStressed); // Shoulder line represents neck health
-
-// Nose indicator
-ctx.fillStyle = isNeckStressed ? "red" : "lime";
-ctx.beginPath();
-ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 6, 0, 2*Math.PI);
-ctx.fill();
-}
+await video.play();resize();
+loading.style.display='none';
+loop();
+})();
 </script>
 </body>
 </html>
