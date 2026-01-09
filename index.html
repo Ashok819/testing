@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AI Stress Analysis - Full Body</title>
+    <title>AI Stress Analysis - Back Camera</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
@@ -11,9 +11,9 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
         
-        /* Video hidden, canvas displays everything */
         video { position: absolute; visibility: hidden; }
-        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); }
+        /* Removed transform: scaleX(-1) to show true perspective */
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; }
 
         #ui-overlay {
             position: fixed; top: 20px; left: 0; width: 100%;
@@ -38,7 +38,7 @@
 </head>
 <body>
 
-<div id="loading">CONNECTING TO BIOMETRIC SENSORS...</div>
+<div id="loading">ACTIVATING REAR SENSORS...</div>
 <video id="video" playsinline></video>
 <canvas id="canvas"></canvas>
 
@@ -67,7 +67,10 @@ pose.onResults(onResults);
 
 async function startApp() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+        // CHANGED: facingMode set to "environment" for back camera
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" } 
+        });
         video.srcObject = stream;
         video.onloadedmetadata = () => {
             video.play();
@@ -94,7 +97,7 @@ function drawStressBone(a, b, isStressed) {
     ctx.beginPath();
     ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
     ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-    ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759'; // Red if stressed, Green if safe
+    ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759';
     ctx.lineWidth = isStressed ? 8 : 4;
     ctx.lineCap = 'round';
     ctx.stroke();
@@ -104,53 +107,37 @@ function onResults(results) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Draw Camera Feed
-    ctx.save();
-    ctx.scale(-1, 1);
-    ctx.translate(-canvas.width, 0);
+    // Draw Camera Feed (Mirroring removed here as well)
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-    ctx.restore();
 
     if (!results.poseLandmarks) return;
     const lm = results.poseLandmarks;
 
-    // --- ANALYSIS LOGIC ---
-    
-    // 1. Neck/Cervical Stress
+    // --- STRESS CALCULATION ---
     const sWidth = Math.abs(lm[11].x - lm[12].x);
     const headHeight = ((lm[11].y + lm[12].y)/2) - lm[0].y;
     const neckStress = (headHeight / sWidth) < 0.45;
 
-    // 2. Arm/Elbow Stress
     const angL = calcAngle(lm[11], lm[13], lm[15]);
     const angR = calcAngle(lm[12], lm[14], lm[16]);
     const armStress = (angL < 50 || angR < 50);
 
-    // 3. Leg/Knee Stress (Detects deep bending or crouching)
     const kneeL = calcAngle(lm[23], lm[25], lm[27]);
     const kneeR = calcAngle(lm[24], lm[26], lm[28]);
     const legStress = (kneeL < 155 || kneeR < 155);
 
-    // Show/Hide Warning
     alertBadge.style.display = (neckStress || armStress || legStress) ? 'block' : 'none';
 
-    // --- DRAW FULL BIOMECHANICAL SKELETON ---
-    
-    // Upper Body
-    drawStressBone(lm[11], lm[12], neckStress); // Neck Base
-    drawStressBone(lm[11], lm[13], armStress); drawStressBone(lm[13], lm[15], armStress); // Left Arm
-    drawStressBone(lm[12], lm[14], armStress); drawStressBone(lm[14], lm[16], armStress); // Right Arm
-    
-    // Core/Torso
+    // --- DRAW FULL SKELETON ---
+    drawStressBone(lm[11], lm[12], neckStress); 
+    drawStressBone(lm[11], lm[13], armStress); drawStressBone(lm[13], lm[15], armStress); 
+    drawStressBone(lm[12], lm[14], armStress); drawStressBone(lm[14], lm[16], armStress); 
     drawStressBone(lm[11], lm[23], false); 
     drawStressBone(lm[12], lm[24], false);
-    drawStressBone(lm[23], lm[24], false); // Pelvis
-    
-    // Lower Body
-    drawStressBone(lm[23], lm[25], legStress); drawStressBone(lm[25], lm[27], legStress); // Left Leg
-    drawStressBone(lm[24], lm[26], legStress); drawStressBone(lm[26], lm[28], legStress); // Right Leg
+    drawStressBone(lm[23], lm[24], false); 
+    drawStressBone(lm[23], lm[25], legStress); drawStressBone(lm[25], lm[27], legStress); 
+    drawStressBone(lm[24], lm[26], legStress); drawStressBone(lm[26], lm[28], legStress); 
 
-    // Head Point
     ctx.fillStyle = neckStress ? '#FF3B30' : '#34C759';
     ctx.beginPath();
     ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 10, 0, 2*Math.PI);
