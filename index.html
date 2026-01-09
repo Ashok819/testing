@@ -3,51 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Biomechanical Angle Analyzer</title>
+    <title>Biometric Back Camera Analyzer</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
 
     <style>
-        :root { --danger: #FF3B30; --safe: #34C759; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
-        
         video { position: absolute; visibility: hidden; }
+        /* Mirroring removed for back camera accuracy */
         canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; }
-
-        #ui-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; align-items: center;
-            padding: 20px; box-sizing: border-box; pointer-events: none; z-index: 10;
-        }
-
-        .alert-banner {
-            background: rgba(255, 59, 48, 0.85); color: white; padding: 10px 25px;
-            border-radius: 8px; font-weight: bold; font-size: 14px;
-            display: none; border: 1px solid white;
-        }
-
+        
         #loading {
             position: fixed; inset: 0; background: #000; z-index: 100;
-            display: flex; align-items: center; justify-content: center; color: white;
+            display: flex; align-items: center; justify-content: center; color: #34C759; letter-spacing: 2px;
         }
     </style>
 </head>
 <body>
 
-<div id="loading">CONNECTING TO REAR SENSORS...</div>
+<div id="loading">CONNECTING REAR SENSORS...</div>
 <video id="video" playsinline></video>
 <canvas id="canvas"></canvas>
-
-<div id="ui-overlay">
-    <div id="alert-banner" class="alert-banner">MECHANICAL OVERLOAD</div>
-</div>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const alertBanner = document.getElementById('alert-banner');
 
 const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -62,10 +44,13 @@ pose.setOptions({
 
 pose.onResults(onResults);
 
+// --- HARD-CODED BACK CAMERA INIT ---
 async function startBackCamera() {
     try {
+        // Request the environment camera specifically
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { exact: "environment" } } 
+            video: { facingMode: { exact: "environment" } },
+            audio: false
         });
         video.srcObject = stream;
         
@@ -76,10 +61,21 @@ async function startBackCamera() {
         camera.start();
         document.getElementById('loading').style.display = 'none';
     } catch (e) {
-        // Fallback if "exact" environment fails on some browsers
-        const streamFallback = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = streamFallback;
-        loading.style.display = 'none';
+        // Fallback for browsers that don't support "exact" constraint
+        try {
+            const streamFallback = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" } 
+            });
+            video.srcObject = streamFallback;
+            const camera = new Camera(video, {
+                onFrame: async () => { await pose.send({image: video}); },
+                width: 1280, height: 720
+            });
+            camera.start();
+            document.getElementById('loading').style.display = 'none';
+        } catch (err) {
+            document.getElementById('loading').innerText = "CAMERA ERROR: " + err.name;
+        }
     }
 }
 
@@ -90,19 +86,24 @@ function calcAngle(a, b, c) {
 }
 
 function drawLabel(text, point, color) {
-    ctx.fillStyle = "black";
-    ctx.fillRect(point.x * canvas.width + 10, point.y * canvas.height - 25, 45, 20);
+    const x = point.x * canvas.width;
+    const y = point.y * canvas.height;
+    
+    // Label Background
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.fillRect(x + 10, y - 25, 50, 22);
+    // Label Text
     ctx.fillStyle = color;
-    ctx.font = "bold 14px monospace";
-    ctx.fillText(`${Math.round(text)}°`, point.x * canvas.width + 15, point.y * canvas.height - 10);
+    ctx.font = "bold 15px monospace";
+    ctx.fillText(`${Math.round(text)}°`, x + 14, y - 9);
 }
 
-function drawBone(a, b, stress) {
+function drawBone(a, b, isStressed) {
     ctx.beginPath();
     ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
     ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-    ctx.strokeStyle = stress > 0.5 ? '#FF3B30' : '#34C759';
-    ctx.lineWidth = 4 + (stress * 4);
+    ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759';
+    ctx.lineWidth = isStressed ? 6 : 3;
     ctx.stroke();
 }
 
@@ -110,51 +111,44 @@ function onResults(results) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Draw clear background
+    // Draw raw camera feed (unmirrored)
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
     if (!results.poseLandmarks) return;
     const lm = results.poseLandmarks;
 
-    // --- ANGLE ANALYSIS ---
-    const angL_Elbow = calcAngle(lm[11], lm[13], lm[15]);
-    const angR_Elbow = calcAngle(lm[12], lm[14], lm[16]);
-    const angL_Knee = calcAngle(lm[23], lm[25], lm[27]);
-    const angR_Knee = calcAngle(lm[24], lm[26], lm[28]);
-    
-    // Neck Logic
-    const sWidth = Math.abs(lm[11].x - lm[12].x);
-    const neckDepth = ((lm[11].y + lm[12].y)/2) - lm[0].y;
-    const neckStress = (neckDepth / sWidth) < 0.45 ? 1 : 0;
+    // --- ANGLE DATA ---
+    const angLElbow = calcAngle(lm[11], lm[13], lm[15]);
+    const angRElbow = calcAngle(lm[12], lm[14], lm[16]);
+    const angLKnee = calcAngle(lm[23], lm[25], lm[27]);
+    const angRKnee = calcAngle(lm[24], lm[26], lm[28]);
 
-    // Update Alert
-    alertBanner.style.display = (neckStress || angL_Elbow < 45 || angR_Elbow < 45) ? 'block' : 'none';
-
-    // --- DRAWING SKELETON ---
     ctx.lineCap = 'round';
     
-    // Upper Body
-    drawBone(lm[11], lm[12], neckStress); 
-    drawBone(lm[11], lm[13], angL_Elbow < 45 ? 1 : 0); drawBone(lm[13], lm[15], angL_Elbow < 45 ? 1 : 0);
-    drawBone(lm[12], lm[14], angR_Elbow < 45 ? 1 : 0); drawBone(lm[14], lm[16], angR_Elbow < 45 ? 1 : 0);
+    // --- DRAW SKELETON ---
+    // Arms (Stress if bent too far)
+    drawBone(lm[11], lm[13], angLElbow < 45); drawBone(lm[13], lm[15], angLElbow < 45);
+    drawBone(lm[12], lm[14], angRElbow < 45); drawBone(lm[14], lm[16], angRElbow < 45);
     
-    // Lower Body
-    drawBone(lm[23], lm[25], angL_Knee < 150 ? 1 : 0); drawBone(lm[25], lm[27], angL_Knee < 150 ? 1 : 0);
-    drawBone(lm[24], lm[26], angR_Knee < 150 ? 1 : 0); drawBone(lm[26], lm[28], angR_Knee < 150 ? 1 : 0);
+    // Legs (Stress if bent > squat)
+    drawBone(lm[23], lm[25], angLKnee < 150); drawBone(lm[25], lm[27], angLKnee < 150);
+    drawBone(lm[24], lm[26], angRKnee < 150); drawBone(lm[26], lm[28], angRKnee < 150);
     
-    // Connect Shoulders to Hips
-    drawBone(lm[11], lm[23], 0); drawBone(lm[12], lm[24], 0); drawBone(lm[23], lm[24], 0);
+    // Core (Shoulders, Hips, Torso)
+    drawBone(lm[11], lm[12], false); 
+    drawBone(lm[11], lm[23], false); drawBone(lm[12], lm[24], false);
+    drawBone(lm[23], lm[24], false);
 
-    // --- ANGLE LABELS ---
-    drawLabel(angL_Elbow, lm[13], angL_Elbow < 45 ? "red" : "lime");
-    drawLabel(angR_Elbow, lm[14], angR_Elbow < 45 ? "red" : "lime");
-    drawLabel(angL_Knee, lm[25], angL_Knee < 150 ? "red" : "lime");
-    drawLabel(angR_Knee, lm[26], angR_Knee < 150 ? "red" : "lime");
+    // --- DRAW DATA LABELS ---
+    drawLabel(angLElbow, lm[13], angLElbow < 45 ? "red" : "lime");
+    drawLabel(angRElbow, lm[14], angRElbow < 45 ? "red" : "lime");
+    drawLabel(angLKnee, lm[25], angLKnee < 150 ? "red" : "lime");
+    drawLabel(angRKnee, lm[26], angRKnee < 150 ? "red" : "lime");
 
-    // Head Node
-    ctx.fillStyle = neckStress ? "red" : "lime";
+    // Nose Reference Point
+    ctx.fillStyle = "#34C759";
     ctx.beginPath();
-    ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 7, 0, 2*Math.PI);
+    ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 5, 0, 2*Math.PI);
     ctx.fill();
 }
 
