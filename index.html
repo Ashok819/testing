@@ -1,170 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Biomechanical Stress Analysis</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Full Body Biomechanical Analysis</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
+    <style>
+        :root { --danger: #FF3B30; --safe: #34C759; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
+        
+        video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; position: absolute; opacity: 0.8; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 5; }
 
-<style>
-:root { --danger: #FF3B30; --safe: #34C759; }
-body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
+        #overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: space-between;
+            padding: 20px; box-sizing: border-box; pointer-events: none; z-index: 10;
+        }
 
-video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; position: absolute; }
-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 5; }
+        .card {
+            background: rgba(0,0,0,0.7); backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+            color: white; padding: 15px; pointer-events: auto; width: fit-content;
+        }
 
-#overlay {
-position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-display: flex; flex-direction: column; justify-content: space-between;
-padding: 20px; box-sizing: border-box; pointer-events: none; z-index: 10;
-}
+        .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; }
+        .value { font-size: 24px; font-weight: bold; color: var(--safe); }
+        .critical { color: var(--danger) !important; }
 
-.card {
-background: rgba(0,0,0,0.7); backdrop-filter: blur(10px);
-border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
-color: white; padding: 15px; pointer-events: auto;
-}
-
-.stress-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; }
-.stress-value { font-size: 20px; font-weight: bold; color: var(--safe); }
-.critical { color: var(--danger) !important; }
-
-#loading-screen {
-position: fixed; inset: 0; background: #000; z-index: 100;
-display: flex; align-items: center; justify-content: center; color: white;
-}
-</style>
+        #loading {
+            position: fixed; inset: 0; background: #000; z-index: 100;
+            display: flex; align-items: center; justify-content: center; color: white;
+        }
+    </style>
 </head>
 <body>
 
-<div id="loading-screen">Initializing Biomechanical Sensors...</div>
-
+<div id="loading">Initialising Sensors...</div>
 <video id="video" playsinline></video>
 <canvas id="canvas"></canvas>
 
 <div id="overlay">
-<div class="card" style="display:flex; justify-content: space-around; text-align: center;">
-<div>
-<div class="stress-label">Cervical Stress</div>
-<div id="neck-stat" class="stress-value">0%</div>
-</div>
-<div>
-<div class="stress-label">Joint Loading</div>
-<div id="joint-stat" class="stress-value">LOW</div>
-</div>
-</div>
+    <div class="card">
+        <div class="label">Cervical Stress</div>
+        <div id="neck-stat" class="value">0%</div>
+    </div>
 
-<div id="alert-msg" class="card" style="text-align:center; display:none; background: var(--danger);">
-HIGH MECHANICAL STRESS DETECTED
-</div>
+    <div id="alert-msg" class="card" style="display:none; background: var(--danger); width: auto;">
+        CRITICAL BODY ALIGNMENT STRESS
+    </div>
 </div>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const loading = document.getElementById('loading-screen');
-
-// Stress State
-let neckStressHistory = [];
+const loading = document.getElementById('loading');
 
 const pose = new Pose({
-locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
 });
 
 pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
 pose.onResults(onResults);
 
-// Camera Setup with Mobile Error Handling
-async function startCamera() {
-try {
-const stream = await navigator.mediaDevices.getUserMedia({
-video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
-});
-video.srcObject = stream;
-video.play();
-
-const camera = new Camera(video, {
-onFrame: async () => { await pose.send({image: video}); },
-width: 640, height: 480
-});
-camera.start();
-loading.style.display = 'none';
-} catch (err) {
-loading.innerText = "Camera Error: Please allow permissions and refresh.";
-console.error(err);
-}
-}
-
-function getAngle(a, b, c) {
-const ang = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-let degree = Math.abs(ang * 180 / Math.PI);
-return degree > 180 ? 360 - degree : degree;
+// --- Camera with Mobile Auto-Fix ---
+async function start() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: 640, height: 480 }
+        });
+        video.srcObject = stream;
+        video.play();
+        
+        const camera = new Camera(video, {
+            onFrame: async () => { await pose.send({image: video}); },
+            width: 640, height: 480
+        });
+        camera.start();
+        loading.style.display = 'none';
+    } catch (e) {
+        loading.innerText = "Camera Access Denied";
+    }
 }
 
-function onResults(results) {
-if (!results.poseLandmarks) return;
-
-canvas.width = video.videoWidth;
-canvas.height = video.videoHeight;
-ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-const lm = results.poseLandmarks;
-
-// --- BIOMECHANICAL STRESS CALCULATION ---
-
-// 1. Cervical (Neck) Stress Analysis
-// Measures head forward tilt relative to shoulder base
-const shoulderMidY = (lm[11].y + lm[12].y) / 2;
-const shoulderWidth = Math.abs(lm[11].x - lm[12].x);
-const headDecline = shoulderMidY - lm[0].y;
-const cervicalRatio = (headDecline / shoulderWidth);
-
-// Normal ratio is > 0.5. Anything lower is "Forward Head Posture"
-const neckStressPercent = Math.min(100, Math.max(0, (0.5 - cervicalRatio) * 200));
-
-// 2. Elbow & Joint Tension
-const angL = getAngle(lm[11], lm[13], lm[15]);
-const angR = getAngle(lm[12], lm[14], lm[16]);
-const jointStress = (angL < 45 || angR < 45 || angL > 165 || angR > 165);
-
-// Update UI
-const neckEl = document.getElementById('neck-stat');
-neckEl.innerText = `${Math.round(neckStressPercent)}%`;
-neckEl.className = neckStressPercent > 40 ? 'stress-value critical' : 'stress-value';
-
-const jointEl = document.getElementById('joint-stat');
-jointEl.innerText = jointStress ? "HIGH" : "LOW";
-jointEl.className = jointStress ? 'stress-value critical' : 'stress-value';
-
-document.getElementById('alert-msg').style.display = (neckStressPercent > 60 || jointStress) ? 'block' : 'none';
-
-// Draw Visualization
-drawStressLine(lm[11], lm[13], angL < 45);
-drawStressLine(lm[13], lm[15], angL < 45);
-drawStressLine(lm[12], lm[14], angR < 45);
-drawStressLine(lm[14], lm[16], angR < 45);
-drawStressLine(lm[11], lm[12], neckStressPercent > 40);
-
-// Head Node
-ctx.fillStyle = neckStressPercent > 40 ? '#FF3B30' : '#34C759';
-ctx.beginPath();
-ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 8, 0, 2*Math.PI);
-ctx.fill();
+function getAng(a, b, c) {
+    const ang = Math.atan2(c.y-b.y, c.x-b.x) - Math.atan2(a.y-b.y, a.x-b.x);
+    let deg = Math.abs(ang * 180 / Math.PI);
+    return deg > 180 ? 360 - deg : deg;
 }
 
-function drawStressLine(a, b, isStressed) {
-ctx.beginPath();
-ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-ctx.strokeStyle = isStressed ? '#FF3B30' : '#34C759';
-ctx.lineWidth = isStressed ? 8 : 4;
-ctx.stroke();
+function bone(a, b, s) {
+    ctx.beginPath();
+    ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+    ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+    ctx.strokeStyle = s ? "#FF3B30" : "#34C759";
+    ctx.lineWidth = s ? 8 : 3;
+    ctx.lineCap = "round";
+    ctx.stroke();
 }
 
-startCamera();
+function onResults(r) {
+    if (!r.poseLandmarks) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    
+    const lm = r.poseLandmarks;
+
+    // --- Stress Analytics ---
+    const sWidth = Math.abs(lm[11].x - lm[12].x);
+    const neckDepth = ((lm[11].y + lm[12].y)/2) - lm[0].y;
+    const nStressRatio = (neckDepth / sWidth);
+    const nStress = Math.min(100, Math.max(0, (0.45 - nStressRatio) * 200));
+
+    // Joint Angles
+    const eL = getAng(lm[11], lm[13], lm[15]);
+    const eR = getAng(lm[12], lm[14], lm[16]);
+    const kL = getAng(lm[23], lm[25], lm[27]);
+    const kR = getAng(lm[24], lm[26], lm[28]);
+
+    // Thresholds
+    const sEL = eL < 40 || eL > 165;
+    const sER = eR < 40 || eR > 165;
+    const sKL = kL < 60;
+    const sKR = kR < 60;
+    const sNeck = nStress > 45;
+
+    // --- UI Update ---
+    const nEl = document.getElementById('neck-stat');
+    nEl.innerText = `${Math.round(nStress)}%`;
+    nEl.className = sNeck ? 'value critical' : 'value';
+    document.getElementById('alert-msg').style.display = (sNeck || sEL || sER) ? 'block' : 'none';
+
+    // --- Draw Full Skeleton ---
+    // Torso
+    bone(lm[11], lm[12], sNeck); // Shoulders
+    bone(lm[11], lm[23], false); // L Side
+    bone(lm[12], lm[24], false); // R Side
+    bone(lm[23], lm[24], false); // Hips
+
+    // Arms
+    bone(lm[11], lm[13], sEL); bone(lm[13], lm[15], sEL);
+    bone(lm[12], lm[14], sER); bone(lm[14], lm[16], sER);
+
+    // Legs
+    bone(lm[23], lm[25], sKL); bone(lm[25], lm[27], sKL);
+    bone(lm[24], lm[26], sKR); bone(lm[26], lm[28], sKR);
+
+    // Head
+    ctx.fillStyle = sNeck ? "#FF3B30" : "#34C759";
+    ctx.beginPath();
+    ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 7, 0, 2*Math.PI);
+    ctx.fill();
+}
+
+start();
 </script>
 </body>
 </html>
