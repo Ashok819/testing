@@ -3,51 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AI Biomechanical Stress Analyzer</title>
+    <title>Biomechanical Stress Analyzer</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
 
     <style>
+        :root { --danger: #FF3B30; --safe: #34C759; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
         
-        /* Video is hidden; we draw it manually to the canvas to prevent black screens */
         video { position: absolute; visibility: hidden; }
-        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; }
+        .mirror { transform: scaleX(-1); }
 
         #ui-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center;
-            padding: 30px; box-sizing: border-box; pointer-events: none; z-index: 10;
+            padding: 20px; box-sizing: border-box; pointer-events: none; z-index: 10;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.3); color: white;
+            padding: 12px 20px; border-radius: 12px; font-weight: bold;
+            pointer-events: auto; cursor: pointer; margin-top: 10px;
         }
 
         .alert-banner {
-            background: rgba(255, 59, 48, 0.9); color: white; padding: 12px 30px;
+            background: var(--danger); color: white; padding: 12px 30px;
             border-radius: 50px; font-weight: bold; font-size: 14px;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
-            display: none; animation: pulse 1.5s infinite;
-        }
-
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
+            display: none; margin-bottom: auto;
         }
 
         #loading {
             position: fixed; inset: 0; background: #000; z-index: 100;
-            display: flex; align-items: center; justify-content: center; color: white; letter-spacing: 2px;
+            display: flex; align-items: center; justify-content: center; color: white;
         }
     </style>
 </head>
 <body>
 
-<div id="loading">CALIBRATING SENSORS...</div>
+<div id="loading">INITIALIZING SENSORS...</div>
 <video id="video" playsinline></video>
 <canvas id="canvas"></canvas>
 
 <div id="ui-overlay">
-    <div id="alert-banner">HIGH MECHANICAL STRESS</div>
+    <div id="alert-banner" class="alert-banner">HIGH MECHANICAL STRESS</div>
+    <button class="btn" onclick="toggleCamera()">🔄 SWITCH CAMERA</button>
 </div>
 
 <script>
@@ -55,6 +57,9 @@ const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const alertBanner = document.getElementById('alert-banner');
+
+let currentFacingMode = "user"; // "user" = front, "environment" = back
+let activeCamera = null;
 
 const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -69,21 +74,38 @@ pose.setOptions({
 
 pose.onResults(onResults);
 
-async function init() {
+async function startCamera() {
+    if (activeCamera) {
+        await activeCamera.stop();
+    }
+
+    // Mirror only if using front camera
+    if (currentFacingMode === "user") {
+        canvas.classList.add('mirror');
+    } else {
+        canvas.classList.remove('mirror');
+    }
+
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode }
+        });
         video.srcObject = stream;
-        video.play();
         
-        const camera = new Camera(video, {
+        activeCamera = new Camera(video, {
             onFrame: async () => { await pose.send({image: video}); },
             width: 640, height: 480
         });
-        camera.start();
+        activeCamera.start();
         document.getElementById('loading').style.display = 'none';
     } catch (e) {
-        document.getElementById('loading').innerText = "CAMERA ERROR";
+        alert("Camera Error: " + e);
     }
+}
+
+function toggleCamera() {
+    currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+    startCamera();
 }
 
 function calcAngle(a, b, c) {
@@ -94,9 +116,8 @@ function calcAngle(a, b, c) {
 
 function drawStressLine(a, b, stressLevel) {
     if (!a || !b) return;
-    // stressLevel: 0 (safe) to 1 (critical)
-    const r = Math.floor(52 + (203 * stressLevel)); // Interpolate to Red
-    const g = Math.floor(199 - (140 * stressLevel)); // Interpolate away from Green
+    const r = Math.floor(52 + (203 * stressLevel));
+    const g = Math.floor(199 - (140 * stressLevel));
     const bColor = Math.floor(89 - (50 * stressLevel));
 
     ctx.beginPath();
@@ -112,61 +133,49 @@ function onResults(results) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Draw Background Frame
     ctx.save();
-    ctx.scale(-1, 1);
-    ctx.translate(-canvas.width, 0);
+    // If front camera, we need to flip the drawing of the image
+    if (currentFacingMode === "user") {
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
+    }
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
     ctx.restore();
 
     if (!results.poseLandmarks) return;
     const lm = results.poseLandmarks;
 
-    // --- BIOMECHANICAL ANALYSIS POINTS ---
-    
-    // 1. Cervical (Neck) - Head Forward/Down detection
+    // --- STRESS CALCULATION ---
     const sWidth = Math.abs(lm[11].x - lm[12].x);
     const neckDepth = ((lm[11].y + lm[12].y)/2) - lm[0].y;
     const neckStress = Math.min(1, Math.max(0, (0.45 - (neckDepth / sWidth)) * 5));
-
-    // 2. Elbow Tension
+    
     const angL = calcAngle(lm[11], lm[13], lm[15]);
     const angR = calcAngle(lm[12], lm[14], lm[16]);
     const armStress = (angL < 50 || angR < 50) ? 1 : 0;
 
-    // 3. Knee/Leg Loading
     const kneeL = calcAngle(lm[23], lm[25], lm[27]);
     const kneeR = calcAngle(lm[24], lm[26], lm[28]);
     const legStress = (kneeL < 155 || kneeR < 155) ? 1 : 0;
 
-    // Alert Logic
     alertBanner.style.display = (neckStress > 0.5 || armStress > 0.5) ? 'block' : 'none';
 
-    // --- DRAW FULL BIOMECHANICAL SKELETON ---
-    
-    // Shoulder & Neck Chain
+    // --- DRAW SKELETON ---
     drawStressLine(lm[11], lm[12], neckStress); 
-    
-    // Arms Chain
     drawStressLine(lm[11], lm[13], armStress); drawStressLine(lm[13], lm[15], armStress);
     drawStressLine(lm[12], lm[14], armStress); drawStressLine(lm[14], lm[16], armStress);
-    
-    // Torso Chain
     drawStressLine(lm[11], lm[23], 0); drawStressLine(lm[12], lm[24], 0);
     drawStressLine(lm[23], lm[24], 0);
-    
-    // Legs Chain
     drawStressLine(lm[23], lm[25], legStress); drawStressLine(lm[25], lm[27], legStress);
     drawStressLine(lm[24], lm[26], legStress); drawStressLine(lm[26], lm[28], legStress);
 
-    // Head Indicator (Nose)
     ctx.fillStyle = neckStress > 0.5 ? '#FF3B30' : '#34C759';
     ctx.beginPath();
     ctx.arc(lm[0].x * canvas.width, lm[0].y * canvas.height, 8, 0, 2*Math.PI);
     ctx.fill();
 }
 
-init();
+startCamera();
 </script>
 </body>
 </html>
