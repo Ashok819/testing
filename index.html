@@ -1,228 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Stillness | Reveal the Self</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>COCO-SSD Person Detection</title>
 
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<!-- TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0"></script>
 
-  <script src="https://cdn.tailwindcss.com"></script>
+<!-- COCO-SSD -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            sand: '#F3EFE8',
-            indigoDeep: '#1F2A44',
-            sage: '#8FA99B',
-            charcoal: '#2B2B2B'
-          },
-          fontFamily: {
-            serif: ['"Cormorant Garamond"', 'serif'],
-          }
-        }
-      }
-    }
-  </script>
-
-  <style>
-    :root {
-      --bg-color: #F3EFE8;
-      --text-color: #2B2B2B;
-    }
-
-    body {
-      background: var(--bg-color);
-      color: var(--text-color);
-      font-family: system-ui, -apple-system, sans-serif;
-      scroll-behavior: smooth;
-    }
-
-    /* Soft breathing effect for the background */
-    @keyframes breathe {
-      0%, 100% { transform: scale(1); opacity: 0.04; }
-      50% { transform: scale(1.15); opacity: 0.08; }
-    }
-
-    .breathing-layer {
-      position: fixed;
-      inset: -10%;
-      background: radial-gradient(circle, #1F2A44 0%, transparent 70%);
-      animation: breathe 15s ease-in-out infinite;
-      z-index: 0;
-      pointer-events: none;
-      filter: blur(80px);
-    }
-
-    /* Scroll reveal animation */
-    section {
-      opacity: 0;
-      transform: translateY(20px);
-      transition: all 1s ease-out;
-    }
-
-    section.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    /* Text selection color */
-    ::selection {
-      background: #8FA99B;
-      color: white;
-    }
-  </style>
+<style>
+body {
+  margin: 0;
+  overflow: hidden;
+  background: black;
+}
+video, canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+#status {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: white;
+  font-size: 14px;
+  background: rgba(0,0,0,0.6);
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+</style>
 </head>
 
-<body class="min-h-screen overflow-x-hidden selection:bg-sage selection:text-white">
+<body>
 
-  <div class="breathing-layer"></div>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+<div id="status">Loading model…</div>
 
-  <div class="relative z-10 max-w-2xl mx-auto px-6 py-20 sm:py-32 space-y-24 sm:space-y-40 text-center">
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusText = document.getElementById("status");
 
-    <section class="space-y-8">
-      <h1 class="text-4xl sm:text-6xl font-serif tracking-tight leading-tight">
-        Stillness reveals the Self
-      </h1>
+let model;
 
-      <div class="space-y-4">
-        <p class="text-lg sm:text-xl font-light">
-          Spirituality is not a religious act.<br>
-          It is the way to know the Self.
-        </p>
-        <p class="opacity-60 text-sm sm:text-base italic">
-          Spirituality is not running away from life.<br>
-          It is aligning with life.
-        </p>
-      </div>
+// 1️⃣ Start Camera (Back Camera)
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } },
+    audio: false
+  });
+  video.srcObject = stream;
 
-      <button id="audioToggle" onclick="toggleSound()"
-        class="text-sage text-xs tracking-[0.2em] uppercase mt-8 border-b border-transparent hover:border-sage transition-all duration-500 pb-1">
-        
-      </button>
-    </section>
-
-    <section class="space-y-6">
-      <h2 class="text-2xl sm:text-3xl font-serif italic">Spirituality</h2>
-      <p class="leading-relaxed">
-        Spirituality is not belief, ritual, or escape.<br>
-        It is the direct knowing of the Self —<br>
-        <span class="font-semibold">awareness recognizing itself.</span>
-      </p>
-      <p class="opacity-60 text-sm">
-        Life continues. Inner conflict ends.
-      </p>
-    </section>
-
-    <section class="space-y-6">
-      <h2 class="text-2xl sm:text-3xl font-serif italic">Mind · Body · Soul</h2>
-      <div class="space-y-4 text-lg">
-        <p><span class="text-sage font-medium">Body</span> — the gateway to the present.</p>
-        <p><span class="text-sage font-medium">Mind</span> — thoughts and emotions to be observed.</p>
-        <p><span class="text-sage font-medium">Soul</span> — awareness itself, the witness.</p>
-      </div>
-      <p class="italic opacity-60 pt-4 border-t border-charcoal/5 max-w-xs mx-auto">
-        The body is experienced. The mind is observed. The soul is what observes.
-      </p>
-    </section>
-
-    <section class="space-y-6">
-      <h2 class="text-2xl sm:text-3xl font-serif italic">Yoga</h2>
-      <p class="leading-relaxed">
-        Yoga is not fitness. Yoga is alignment.
-      </p>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm pt-4">
-        <div class="p-4 border border-charcoal/5 rounded-sm">
-          <p class="font-bold uppercase tracking-widest text-[10px] mb-2">Karma yoga</p>
-          <p class="opacity-70">Alignment through action</p>
-        </div>
-        <div class="p-4 border border-charcoal/5 rounded-sm">
-          <p class="font-bold uppercase tracking-widest text-[10px] mb-2">Bhakti yoga</p>
-          <p class="opacity-70">Alignment through devotion</p>
-        </div>
-        <div class="p-4 border border-charcoal/5 rounded-sm">
-          <p class="font-bold uppercase tracking-widest text-[10px] mb-2">Jnana yoga</p>
-          <p class="opacity-70">Alignment through knowing</p>
-        </div>
-        <div class="p-4 border border-charcoal/5 rounded-sm">
-          <p class="font-bold uppercase tracking-widest text-[10px] mb-2">Raja yoga</p>
-          <p class="opacity-70">Alignment through stillness</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="space-y-6">
-      <h2 class="text-2xl sm:text-3xl font-serif italic">Meditation</h2>
-      <p class="leading-relaxed">
-        Meditation is not effort.<br>
-        It is allowing.
-      </p>
-      <p class="opacity-60">
-        When the body rests and the mind quiets,<br>
-        awareness remains.
-      </p>
-    </section>
-
-    <section class="space-y-6">
-      <h2 class="text-2xl sm:text-3xl font-serif italic">The One Asana</h2>
-      <p class="italic leading-relaxed">
-        Choose any one asana. Let the body be still.<br>
-        Breathe consciously. Do not try to connect —<br>
-        allow connection to happen.
-      </p>
-      <div class="h-px w-12 bg-sage mx-auto my-8"></div>
-      <p class="italic">
-        Every musical instrument is tuned before it is played. In the same way, tune yourself for a better melody of life.
-      </p>
-    </section>
-
-    <footer class="pt-20 pb-10 opacity-40 text-[10px] uppercase tracking-[0.3em]">
- 
-    </footer>
-
-  </div>
-
-  <audio id="audio" loop>
-    <source src="sound/universe.mp3" type="audio/mpeg">
-  </audio>
-
-  <script>
-    const audio = document.getElementById("audio");
-    const audioBtn = document.getElementById("audioToggle");
-    let playing = false;
-
-    // Toggle Sound Function
-    function toggleSound() {
-      if (!playing) {
-        audio.volume = 0.15;
-        audio.play().catch(err => console.log("Audio requires user interaction first."));
-        audioBtn.innerText = "Silence Universal Sound";
-      } else {
-        audio.pause();
-        audioBtn.innerText = "Enable Universal Sound";
-      }
-      playing = !playing;
-    }
-
-    // Scroll Reveal Logic
-    const observerOptions = {
-      threshold: 0.1
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      video.play();
+      resolve();
     };
+  });
+}
 
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('visible');
-        }
-      });
-    }, observerOptions);
+// 2️⃣ Load COCO-SSD
+async function loadModel() {
+  model = await cocoSsd.load();
+  statusText.innerText = "Model loaded. Detecting…";
+}
 
-    document.querySelectorAll('section').forEach(section => {
-      observer.observe(section);
-    });
-  </script>
+// 3️⃣ Detection Loop
+async function detect() {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const predictions = await model.detect(video);
+
+  predictions.forEach(pred => {
+    if (pred.class === "person") {
+      const [x, y, w, h] = pred.bbox;
+
+      ctx.strokeStyle = "lime";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x, y, w, h);
+
+      ctx.fillStyle = "lime";
+      ctx.font = "16px Arial";
+      ctx.fillText(
+        `Person ${(pred.score * 100).toFixed(1)}%`,
+        x,
+        y > 20 ? y - 5 : y + 20
+      );
+    }
+  });
+
+  requestAnimationFrame(detect);
+}
+
+// 4️⃣ Init
+(async () => {
+  await startCamera();
+  await loadModel();
+  detect();
+})();
+</script>
 
 </body>
 </html>
