@@ -1,114 +1,228 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>COCO-SSD Person Detection</title>
+  <meta charset="UTF-8" />
+  <title>Stillness</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 
-<!-- TensorFlow.js -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0"></script>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
-<!-- COCO-SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            sand: '#F3EFE8',
+            indigoDeep: '#1F2A44',
+            sage: '#8FA99B',
+            charcoal: '#2B2B2B'
+          }
+        }
+      }
+    }
+  </script>
 
-<style>
-body {
-  margin: 0;
-  overflow: hidden;
-  background: black;
-}
-video, canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-}
-#status {
-  position: fixed;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: white;
-  font-size: 14px;
-  background: rgba(0,0,0,0.6);
-  padding: 6px 12px;
-  border-radius: 8px;
-}
-</style>
+  <!-- Google Analytics (optional – replace with your ID) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-XXXXXXXXXX', { anonymize_ip: true });
+  </script>
+
+  <style>
+    body {
+      background: #F3EFE8;
+      color: #2B2B2B;
+      font-family: system-ui, sans-serif;
+    }
+
+    @keyframes breathe {
+      0% { transform: scale(1); opacity: 0.05; }
+      50% { transform: scale(1.04); opacity: 0.08; }
+      100% { transform: scale(1); opacity: 0.05; }
+    }
+
+    .breathing {
+      animation: breathe 20s ease-in-out infinite;
+    }
+  </style>
 </head>
 
-<body>
+<body class="min-h-screen overflow-x-hidden">
 
-<video id="video" autoplay playsinline muted></video>
-<canvas id="canvas"></canvas>
-<div id="status">Loading model…</div>
+  <!-- Breathing Background -->
+  <div class="fixed inset-0 bg-indigoDeep breathing"></div>
 
-<script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const statusText = document.getElementById("status");
+  <!-- MAIN CONTENT -->
+  <div class="relative z-10 max-w-3xl mx-auto px-4 sm:px-6 py-14 sm:py-20 space-y-16 sm:space-y-28 text-center">
 
-let model;
+    <!-- HERO -->
+    <section class="space-y-6">
+      <h1 class="text-3xl sm:text-4xl md:text-5xl font-serif tracking-wide">
+        Stillness reveals the Self
+      </h1>
 
-// 1️⃣ Start Camera (Back Camera)
-async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: "environment" } },
-    audio: false
-  });
-  video.srcObject = stream;
+      <p class="text-base sm:text-lg">
+        Spirituality is not a religious act.  
+        It is the way to know the Self.
+      </p>
 
-  return new Promise(resolve => {
-    video.onloadedmetadata = () => {
-      video.play();
-      resolve();
-    };
-  });
-}
+      <p class="opacity-80 text-sm sm:text-base">
+        Spirituality is not running away from life.  
+        It is aligning with life.
+      </p>
 
-// 2️⃣ Load COCO-SSD
-async function loadModel() {
-  model = await cocoSsd.load();
-  statusText.innerText = "Model loaded. Detecting…";
-}
+      <button onclick="toggleSound()"
+        class="text-sage text-xs sm:text-sm tracking-widest uppercase mt-4">
+        Enable Universal Sound
+      </button>
+    </section>
 
-// 3️⃣ Detection Loop
-async function detect() {
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+    <!-- SPIRITUALITY -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Spirituality</h2>
+      <p>
+        Spirituality is not belief, ritual, or escape.
+        It is the direct knowing of the Self —
+        awareness recognizing itself.
+      </p>
+      <p class="opacity-80">
+        Life continues. Inner conflict ends.
+      </p>
+    </section>
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+    <!-- MIND BODY SOUL -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Mind · Body · Soul</h2>
+      <p><strong>Body</strong> — the gateway to the present.</p>
+      <p><strong>Mind</strong> — thoughts and emotions to be observed.</p>
+      <p><strong>Soul</strong> — awareness itself, the witness.</p>
+      <p class="italic opacity-80">
+        The body is experienced.  
+        The mind is observed.  
+        The soul is what observes.
+      </p>
+    </section>
 
-  const predictions = await model.detect(video);
+    <!-- ENERGY -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Stillness & Energy</h2>
+      <p>
+        Every atom in the universe vibrates with energy.
+      </p>
+      <p class="opacity-80">
+        Stillness is harmony of movement.
+      </p>
+    </section>
 
-  predictions.forEach(pred => {
-    if (pred.class === "person") {
-      const [x, y, w, h] = pred.bbox;
+    <!-- YOGA -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Yoga</h2>
+      <p>
+        Yoga is not fitness.  
+        Yoga is alignment.
+      </p>
+      <p class="italic opacity-80">
+        You don’t need a thousand asanas.  
+        Only one matters — how still you are.
+      </p>
+    </section>
 
-      ctx.strokeStyle = "lime";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, w, h);
+    <!-- TYPES OF YOGA -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Types of Yoga</h2>
+      <p><strong>Karma Yoga</strong> — alignment through action.</p>
+      <p><strong>Bhakti Yoga</strong> — alignment through devotion.</p>
+      <p><strong>Jnana Yoga</strong> — alignment through knowing.</p>
+      <p><strong>Raja Yoga</strong> — alignment through stillness.</p>
+    </section>
 
-      ctx.fillStyle = "lime";
-      ctx.font = "16px Arial";
-      ctx.fillText(
-        `Person ${(pred.score * 100).toFixed(1)}%`,
-        x,
-        y > 20 ? y - 5 : y + 20
-      );
+    <!-- MEDITATION -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Meditation</h2>
+      <p>
+        Meditation is not effort.  
+        It is allowing.
+      </p>
+      <p class="opacity-80">
+        When the body rests and the mind quiets,
+        awareness remains.
+      </p>
+    </section>
+
+    <!-- ONE ASANA -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">One Asana</h2>
+      <p class="italic">
+        Choose any one asana.  
+        Let the body be still.
+      </p>
+      <p class="italic">
+        Breathe consciously.  
+        Do not try to connect —  
+        allow connection to happen.
+      </p>
+      <p class="opacity-80">
+        Stillness aligns the body.  
+        Breath settles the mind.  
+        Awareness reveals itself.
+      </p>
+    </section>
+
+    <!-- TUNING -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Tuning Before Expression</h2>
+      <p class="italic">
+        Every musical instrument is tuned before it is played.  
+        In the same way, tune yourself for a better melody of life.
+      </p>
+    </section>
+
+    <!-- CLARITY -->
+    <section class="space-y-4">
+      <h2 class="text-xl sm:text-2xl font-serif">Clarity</h2>
+      <p>Knowing the Self = awareness turning inward</p>
+      <p>Paramatmaa = universal consciousness</p>
+      <p class="italic opacity-80">
+        The journey is not distance — it is clarity.
+      </p>
+      <p class="italic">
+        The closer you are to yourself,  
+        the closer you are to the whole.
+      </p>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="opacity-70 text-xs sm:text-sm">
+      This space adds nothing to you.  
+      It helps you notice what was never missing.
+    </footer>
+
+  </div>
+
+  <!-- AUDIO -->
+  <audio id="audio" loop>
+    <source src="sound/universe.mp3" type="audio/mpeg">
+  </audio>
+
+  <!-- JAVASCRIPT -->
+  <script>
+    const audio = document.getElementById("audio");
+    let playing = false;
+
+    function toggleSound() {
+      if (!playing) {
+        audio.volume = 0.15;
+        audio.play();
+      } else {
+        audio.pause();
+      }
+      playing = !playing;
     }
-  });
-
-  requestAnimationFrame(detect);
-}
-
-// 4️⃣ Init
-(async () => {
-  await startCamera();
-  await loadModel();
-  detect();
-})();
-</script>
+  </script>
 
 </body>
 </html>
